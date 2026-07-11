@@ -1,0 +1,2076 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>健康</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"></script>
+
+<style>
+/* ==========================================================================
+   0. 基础重置 & 设计变量（浅色 / 深色，模拟 iOS 系统语义色）
+   ========================================================================== */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+
+:root {
+  --bg: #F2F2F7;
+  --card-bg: #FFFFFF;
+  --card-bg-2: #FFFFFF;
+  --label: #000000;
+  --label-2: rgba(60,60,67,.60);
+  --label-3: rgba(60,60,67,.35);
+  --separator: rgba(60,60,67,.29);
+  --fill-4: rgba(120,120,128,.13);
+  --fill-3: rgba(120,120,128,.16);
+  --blue: #007AFF;
+  --red: #FF3B30;
+  --green: #34C759;
+  --orange: #FF9500;
+  --glass-bg: rgba(255,255,255,.78);
+  --glass-border: rgba(0,0,0,.07);
+  --page-backdrop-a: #dfe1e8;
+  --page-backdrop-b: #c8cad3;
+  --device-bezel: #101014;
+  --sheet-shadow: rgba(20,20,30,.28);
+  --skeleton: rgba(120,120,128,.18);
+
+  --cat-activity: #FA2445;
+  --cat-activity-2: #FF5A7A;
+  --cat-body: #22C48E;
+  --cat-body-2: #57DDAC;
+  --cat-mobility: #0A84FF;
+  --cat-mobility-2: #55A9FF;
+  --cat-hearing: #4BC3E6;
+  --cat-hearing-2: #7BD7F2;
+  --cat-sleep: #5D5FEF;
+  --cat-sleep-2: #8A8CF5;
+
+  --stage-awake: #FF8C5A;
+  --stage-rem: #59CFC6;
+  --stage-core: #7A78E8;
+  --stage-deep: #3B2FA0;
+  --stage-inbed: #B9BAC5;
+
+  --chart-grid: rgba(60,60,67,.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --card-bg: #1C1C1E;
+    --card-bg-2: #232325;
+    --label: #FFFFFF;
+    --label-2: rgba(235,235,245,.60);
+    --label-3: rgba(235,235,245,.35);
+    --separator: rgba(84,84,88,.65);
+    --fill-4: rgba(120,120,128,.28);
+    --fill-3: rgba(120,120,128,.32);
+    --glass-bg: rgba(22,22,24,.72);
+    --glass-border: rgba(255,255,255,.08);
+    --page-backdrop-a: #0b0b0d;
+    --page-backdrop-b: #000000;
+    --device-bezel: #000000;
+    --sheet-shadow: rgba(0,0,0,.6);
+    --skeleton: rgba(120,120,128,.24);
+    --chart-grid: rgba(235,235,245,.10);
+  }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+               "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: radial-gradient(circle at 50% -10%, var(--page-backdrop-a), var(--page-backdrop-b));
+  color: var(--label);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+button, input { font-family: inherit; }
+
+/* ==========================================================================
+   1. 页面布局（网页原生：居中定宽容器，不做手机外壳/状态栏/刘海等拟物装饰）
+   ========================================================================== */
+.stage {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+}
+.device {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  min-height: 100dvh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   2. 导航容器 + push/pop 转场
+   ========================================================================== */
+.nav-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+.nav-screen {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg);
+  transition: transform .36s cubic-bezier(.32,.72,0,1), filter .36s cubic-bezier(.32,.72,0,1);
+  transform: translateX(0);
+  scrollbar-width: none;
+}
+.nav-screen::-webkit-scrollbar { display: none; }
+.nav-screen.enter-push { transform: translateX(100%); }
+.nav-screen.buried { filter: brightness(.82); pointer-events: none; }
+.nav-screen.bury-target { transform: translateX(-26%); }
+/* 结算后（非动画过程中）的被覆盖页面一律硬隐藏，避免移动端浏览器在
+   滚动回弹/合成层重排时露出下方页面的边缘 —— 这是比单纯"位移+调暗"更强的保证。 */
+.nav-screen.buried:not(.mid-transition) { visibility: hidden; }
+.nav-screen .scroll-pad-bottom { height: 24px; }
+
+.nav-bar {
+  position: sticky; top: 0; z-index: 20;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--glass-bg);
+  border-bottom: .5px solid transparent;
+  transition: border-color .2s;
+}
+.nav-bar.collapsed { border-bottom-color: var(--glass-border); }
+.nav-bar-inner {
+  height: 44px;
+  display: flex; align-items: center;
+  padding: 0 6px;
+  position: relative;
+}
+.nav-back {
+  display: flex; align-items: center; gap: 2px;
+  background: none; border: 0; color: var(--blue);
+  font-size: 17px; padding: 6px 10px 6px 4px;
+  max-width: 46%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.nav-back svg { flex-shrink: 0; }
+.nav-bar-title-small {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, calc(-50% + 6px));
+  font-size: 17px; font-weight: 600;
+  opacity: 0; transition: opacity .2s, transform .2s;
+  max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+}
+.nav-bar.collapsed .nav-bar-title-small { opacity: 1; transform: translate(-50%, -50%); }
+.nav-bar-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.nav-icon-btn {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--fill-4); border: 0; color: var(--label-2); cursor: pointer;
+}
+.nav-large-title-wrap { overflow: hidden; transition: max-height .2s, opacity .2s; max-height: 60px; }
+.nav-bar.collapsed .nav-large-title-wrap { max-height: 0; opacity: 0; }
+.nav-large-title {
+  font-size: 34px; font-weight: 700; letter-spacing: -.4px;
+  padding: 2px 16px 10px;
+  color: var(--label);
+}
+.nav-subtitle { font-size: 13px; color: var(--label-2); padding: 0 16px 10px; margin-top: -8px; }
+
+/* ==========================================================================
+   3. 搜索框
+   ========================================================================== */
+.search-wrap { padding: 10px 16px 14px; }
+.search-box {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--fill-4); border-radius: 10px;
+  padding: 7px 8px; color: var(--label-2);
+}
+.search-box svg { flex-shrink: 0; }
+.search-box input {
+  border: 0; outline: 0; background: transparent; font-size: 17px;
+  color: var(--label); width: 100%;
+}
+.search-box input::placeholder { color: var(--label-2); }
+
+/* ==========================================================================
+   4. 分段控件 (日/周/月/6月/年) + 区间导航 (‹ 日期范围 ›)
+   ========================================================================== */
+.segmented-wrap { padding: 2px 16px 14px; }
+.segmented {
+  display: flex; background: var(--fill-4); border-radius: 9px; padding: 2px;
+}
+.segmented button {
+  flex: 1; border: 0; background: transparent; cursor: pointer;
+  padding: 6px 0; font-size: 13px; font-weight: 590; color: var(--label);
+  border-radius: 7px; transition: background .15s;
+}
+.segmented button.active { background: var(--card-bg-2); box-shadow: 0 1px 3px rgba(0,0,0,.16); }
+
+.period-nav {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 2px 16px 8px; color: var(--label);
+}
+.period-nav button {
+  border: 0; background: none; color: var(--label-3); cursor: pointer;
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+}
+.period-nav button.enabled { color: var(--blue); }
+.period-nav .period-label { font-size: 15px; font-weight: 600; min-width: 150px; text-align: center; }
+
+/* ==========================================================================
+   5. 卡片 / 分组列表
+   ========================================================================== */
+.card {
+  background: var(--card-bg); border-radius: 14px; margin: 0 16px 20px; overflow: hidden;
+  box-shadow: 0 1px 1px rgba(0,0,0,.02);
+}
+.card-header {
+  font-size: 13px; color: var(--label-2); padding: 0 32px 6px; margin-top: 22px;
+}
+.list-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; min-height: 44px; position: relative;
+  background: var(--card-bg); cursor: pointer; text-decoration: none; color: inherit;
+}
+.list-row:active { background: var(--fill-4); }
+.list-row + .list-row { border-top: .5px solid var(--separator); margin-left: 0; }
+.list-row.inset + .list-row.inset { margin-left: 0; }
+.list-row.inset { padding-left: 16px; }
+.list-row.inset + .list-row.inset::before {
+  content: ''; position: absolute; left: 54px; right: 0; top: 0; height: .5px; background: var(--separator);
+}
+.list-row.inset + .list-row.inset { border-top: 0; }
+.row-icon {
+  width: 29px; height: 29px; border-radius: 7px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.row-icon svg { width: 17px; height: 17px; }
+.row-icon.lg { width: 34px; height: 34px; border-radius: 8px; }
+.row-icon.lg svg { width: 19px; height: 19px; }
+.row-title { flex: 1; font-size: 17px; min-width: 0; }
+.row-title .row-sub { display: block; font-size: 13px; color: var(--label-2); margin-top: 1px; }
+.row-value { font-size: 17px; color: var(--label-2); white-space: nowrap; }
+.row-chevron { color: var(--label-3); flex-shrink: 0; margin-left: 2px; }
+.row-disclosure { display: flex; align-items: center; gap: 6px; }
+
+/* ==========================================================================
+   6. 摘要页 — 收藏 网格卡片
+   ========================================================================== */
+.metric-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  padding: 0 16px 8px;
+}
+.metric-card {
+  background: var(--card-bg); border-radius: 14px; padding: 14px 14px 10px;
+  cursor: pointer; display: flex; flex-direction: column; gap: 8px;
+  min-height: 132px; min-width: 0;
+}
+.metric-card:active { background: var(--fill-4); }
+.metric-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.metric-card-head .row-icon { width: 20px; height: 20px; border-radius: 5px; flex-shrink: 0; }
+.metric-card-head .row-icon svg { width: 12px; height: 12px; }
+.metric-card-name {
+  font-size: 13px; font-weight: 600; color: var(--label-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.metric-card-value { font-size: 15px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metric-card-value b { font-size: 23px; font-weight: 700; letter-spacing: -.3px; }
+.metric-card-value .unit { font-size: 14px; font-weight: 500; color: var(--label-2); margin-left: 2px; }
+.metric-card-date { font-size: 12px; color: var(--label-3); }
+.metric-card-spark { height: 34px; margin-top: auto; min-width: 0; }
+.metric-card-spark canvas { display: block; width: 100% !important; height: 100% !important; }
+.metric-card-empty { color: var(--label-3); font-size: 13px; padding: 20px 0; text-align:center; }
+
+/* ==========================================================================
+   7. 详情页 — 图表卡片 / 统计行 / 关于 / 数据来源
+   ========================================================================== */
+.chart-card {
+  background: var(--card-bg); border-radius: 14px; margin: 0 16px 16px; padding: 14px 6px 10px;
+}
+.chart-canvas-wrap { position: relative; height: 220px; padding: 0 8px; }
+.chart-canvas-wrap.sleep-timeline-height { height: auto; }
+.stat-row {
+  display: flex; align-items: baseline; gap: 6px; padding: 12px 16px 4px;
+  border-top: .5px solid var(--separator); margin-top: 8px;
+}
+.stat-row .stat-value { font-size: 15px; font-weight: 600; }
+.stat-row .stat-label { font-size: 13px; color: var(--label-2); }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; padding: 10px 16px 12px; }
+.stat-grid .stat-box { min-width: 0; }
+.stat-grid .stat-box .n { font-size: 20px; font-weight: 700; letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-grid .stat-box .n .u { font-size: 13px; font-weight: 500; color: var(--label-2); margin-left: 2px;}
+.stat-grid .stat-box .l { font-size: 12.5px; color: var(--label-2); margin-top: 1px; }
+
+.about-block { padding: 2px 16px 18px; font-size: 14px; line-height: 1.55; color: var(--label-2); }
+.about-title { font-size: 20px; font-weight: 700; padding: 20px 16px 8px; color: var(--label); }
+.source-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--label-2);
+  background: var(--fill-4); border-radius: 20px; padding: 4px 10px 4px 6px; margin: 2px 4px 2px 0;
+}
+.source-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+
+.data-list-row { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 16px; font-size: 15px; }
+.data-list-row + .data-list-row { border-top: .5px solid var(--separator); }
+.data-list-row .d-date { color: var(--label); }
+.data-list-row .d-date .d-time { color: var(--label-2); font-size: 12.5px; margin-left: 6px; }
+.data-list-row .d-value { font-weight: 600; }
+.data-list-row .d-src { color: var(--label-3); font-size: 12px; margin-top: 1px; }
+.load-more-btn {
+  display: block; width: calc(100% - 32px); margin: 4px 16px 20px; padding: 12px; border: 0;
+  background: var(--card-bg); border-radius: 12px; color: var(--blue); font-size: 15px; font-weight: 600; cursor: pointer;
+}
+
+/* ==========================================================================
+   8. 睡眠专项：阶段图例 / 单晚时间轴
+   ========================================================================== */
+.stage-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; padding: 4px 16px 16px; }
+.stage-legend-item { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.stage-legend-item .sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.stage-legend-item .sn { color: var(--label); font-weight: 500; }
+.stage-legend-item .sv { color: var(--label-2); }
+
+.night-timeline-card { background: var(--card-bg); border-radius: 14px; margin: 0 16px 16px; padding: 16px; }
+.night-timeline-title { font-size: 13px; color: var(--label-2); margin-bottom: 10px; display:flex; justify-content:space-between; }
+.night-timeline-bar {
+  display: flex; width: 100%; height: 26px; border-radius: 8px; overflow: hidden;
+  background: var(--fill-4);
+}
+.night-timeline-bar .seg { height: 100%; min-width: 2px; }
+.night-timeline-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--label-3); margin-top: 6px; }
+.stage-duration-list { margin-top: 14px; }
+.stage-duration-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 15px; }
+.stage-duration-row .sw { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+.stage-duration-row .name { flex: 1; }
+.stage-duration-row .dur { color: var(--label-2); font-variant-numeric: tabular-nums; }
+
+.night-row { display:flex; align-items:center; gap:12px; padding: 10px 16px; }
+.night-row + .night-row { border-top: .5px solid var(--separator); }
+.night-row .nr-date { width: 78px; flex-shrink:0; font-size: 14px; }
+.night-row .nr-date .wd { display:block; font-size: 11.5px; color: var(--label-2); }
+.night-row .nr-bar { flex: 1; height: 18px; border-radius: 5px; overflow:hidden; display:flex; background:var(--fill-4); }
+.night-row .nr-bar .seg { height: 100%; }
+.night-row .nr-total { width: 56px; text-align:right; font-size: 13.5px; color: var(--label-2); flex-shrink:0; }
+
+/* ==========================================================================
+   9. Tab 栏
+   ========================================================================== */
+.tab-bar {
+  flex: 0 0 auto; z-index: 30;
+  display: flex;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--glass-bg);
+  border-top: .5px solid var(--glass-border);
+  padding-bottom: 2px;
+}
+.tab-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 7px 0 4px; background: none; border: 0; color: var(--label-3); cursor: pointer;
+}
+.tab-item svg { width: 25px; height: 25px; }
+.tab-item .tab-label { font-size: 10px; font-weight: 500; }
+.tab-item.active { color: var(--blue); }
+
+/* ==========================================================================
+   10. 上传 / 加载 / 空状态
+   ========================================================================== */
+#upload-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 0%, #2c2c34, #0d0d10);
+  padding: 24px;
+}
+.upload-card {
+  width: 100%; max-width: 420px; background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 24px; padding: 36px 28px 30px; text-align: center;
+  backdrop-filter: blur(20px);
+}
+.upload-icon {
+  width: 64px; height: 64px; border-radius: 16px; margin: 0 auto 18px;
+  background: linear-gradient(150deg, var(--cat-activity), #FF375F);
+  display: flex; align-items: center; justify-content: center;
+}
+.upload-title { color: #fff; font-size: 21px; font-weight: 700; margin-bottom: 8px; }
+.upload-desc { color: rgba(255,255,255,.6); font-size: 14px; line-height: 1.6; margin-bottom: 22px; }
+.dropzone {
+  display: flex; flex-direction: column; align-items: center;
+  border: 1.5px dashed rgba(255,255,255,.28); border-radius: 16px;
+  padding: 26px 16px; cursor: pointer; transition: border-color .15s, background .15s;
+  color: rgba(255,255,255,.85);
+}
+.dropzone:hover, .dropzone.dragover { border-color: rgba(255,255,255,.6); background: rgba(255,255,255,.05); }
+.dropzone .dz-main { font-size: 15px; font-weight: 600; margin-top: 10px; }
+.dropzone .dz-sub { font-size: 12.5px; color: rgba(255,255,255,.45); margin-top: 4px; }
+#file-input { display: none; }
+.upload-progress { margin-top: 18px; display: none; }
+.upload-progress.show { display: block; }
+.progress-track { height: 5px; border-radius: 3px; background: rgba(255,255,255,.15); overflow: hidden; }
+.progress-fill { height: 100%; width: 0%; background: var(--blue); transition: width .25s; border-radius: 3px; }
+.upload-progress .pg-text { color: rgba(255,255,255,.55); font-size: 12.5px; margin-top: 8px; }
+.upload-error { color: #FF6B6B; font-size: 13px; margin-top: 14px; display: none; }
+.upload-error.show { display: block; }
+.sample-btn {
+  margin-top: 14px; background: none; border: 0; color: rgba(255,255,255,.45);
+  font-size: 12.5px; text-decoration: underline; cursor: pointer;
+}
+
+.empty-state { text-align: center; padding: 60px 32px; color: var(--label-3); }
+.empty-state svg { margin-bottom: 14px; opacity: .5; }
+.empty-state .es-title { font-size: 17px; font-weight: 600; color: var(--label-2); margin-bottom: 6px; }
+.empty-state .es-sub { font-size: 14px; line-height: 1.5; }
+
+.skeleton-line { background: var(--skeleton); border-radius: 6px; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+.skeleton-line { animation: pulse 1.3s ease-in-out infinite; }
+
+</style>
+</head>
+<body>
+
+<div id="upload-overlay">
+  <div class="upload-card">
+    <div class="upload-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M12,21.35l-1.45-1.32C5.4,15.36,2,12.28,2,8.5C2,5.42,4.42,3,7.5,3c1.74,0,3.41,0.81,4.5,2.09C13.09,3.81,14.76,3,16.5,3C19.58,3,22,5.42,22,8.5c0,3.78-3.4,6.86-8.55,11.54L12,21.35z" fill="#fff"/></svg>
+    </div>
+    <div class="upload-title">健康数据可视化</div>
+    <div class="upload-desc">选择「Simple Health Export CSV」导出的 .zip 文件<br>数据仅在本地浏览器中处理，不会上传到任何服务器</div>
+    <label class="dropzone" id="dropzone" for="file-input">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" style="margin:0 auto;display:block"><path d="M12 4v11m0-11l4 4m-4-4l-4 4" stroke="rgba(255,255,255,.7)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 16.5v2A2.5 2.5 0 007.5 21h9a2.5 2.5 0 002.5-2.5v-2" stroke="rgba(255,255,255,.7)" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <div class="dz-main">点按选择 或 拖拽 zip 文件到此处</div>
+      <div class="dz-sub">export.zip</div>
+    </label>
+    <input type="file" id="file-input" accept=".zip">
+    <div class="upload-progress" id="upload-progress">
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="pg-text" id="progress-text">正在解析…</div>
+    </div>
+    <div class="upload-error" id="upload-error"></div>
+    <button class="sample-btn" id="sample-btn" type="button">没有数据？加载示例数据看看</button>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="device" id="device">
+    <div class="nav-viewport" id="nav-viewport"></div>
+    <div class="tab-bar" id="tab-bar">
+      <button class="tab-item active" data-tab="summary">
+        <svg viewBox="0 0 25 25" fill="none"><rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/><rect x="14" y="3" width="8" height="8" rx="2" fill="currentColor" opacity=".45"/><rect x="3" y="14" width="8" height="8" rx="2" fill="currentColor" opacity=".45"/><rect x="14" y="14" width="8" height="8" rx="2" fill="currentColor"/></svg>
+        <span class="tab-label">摘要</span>
+      </button>
+      <button class="tab-item" data-tab="browse">
+        <svg viewBox="0 0 25 25" fill="none"><path d="M4 6.5h17M4 12.5h17M4 18.5h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span class="tab-label">浏览</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   MODULE A: 解析核心 (已在 Node 环境下用79项断言测试通过)
+   ============================================================ */
+/* ==========================================================================
+   core.js — Apple Health CSV 导出解析与聚合核心逻辑
+   纯函数实现，无 DOM 依赖，可在 Node 中单元测试，也可原样嵌入浏览器 <script>。
+   ========================================================================== */
+
+// ---- 1. 文件名 -> HealthKit 标识符 -------------------------------------------------
+// 文件名形如: HKQuantityTypeIdentifierStepCount_2026-07-18..._SimpleHealthExportCSV.csv
+// 时间戳部分格式不固定（可能含 ? 等字符），因此只匹配标识符本身（连续字母）。
+function extractIdentifier(filename) {
+  var base = String(filename).split('/').pop();
+  var m = base.match(/HK(Quantity|Category)TypeIdentifier([A-Za-z]+)/);
+  if (!m) return null;
+  return { kind: m[1] === 'Quantity' ? 'quantity' : 'category', key: m[2] };
+}
+
+// ---- 2. CSV 表头 -> 规范字段 映射 -------------------------------------------------
+var HEADER_ALIASES = {
+  source: ['sourcename', 'source', 'source name'],
+  sourceVersion: ['sourceversion', 'source version'],
+  device: ['device'],
+  type: ['type'],
+  unit: ['unit'],
+  creationDate: ['creationdate', 'creation date'],
+  startDate: ['startdate', 'start date', 'start'],
+  endDate: ['enddate', 'end date', 'end'],
+  value: ['value']
+};
+
+function buildHeaderMap(headerRow) {
+  var norm = {};
+  headerRow.forEach(function (h, i) {
+    norm[String(h).trim().toLowerCase()] = i;
+  });
+  var map = {};
+  Object.keys(HEADER_ALIASES).forEach(function (canonical) {
+    var aliases = HEADER_ALIASES[canonical];
+    for (var i = 0; i < aliases.length; i++) {
+      if (norm.hasOwnProperty(aliases[i])) {
+        map[canonical] = norm[aliases[i]];
+        return;
+      }
+    }
+  });
+  return map;
+}
+
+// ---- 3. 日期解析 --------------------------------------------------------------
+// 真实 Apple Health CSV 导出的时间戳形如: "2026-06-01 3:18:33\u202fAM +0000"
+// （注意: 小时不补零、AM/PM 前是窄不换行空格 U+202F、偏移量单独一段）。
+// 也兼容 "YYYY-MM-DD HH:mm:ss ±ZZZZ" / ISO8601 等其它常见格式。
+function parseHealthDate(str) {
+  if (!str) return null;
+  var s = String(str).trim();
+  // 归一化窄不换行空格(U+202F)、不换行空格(U+00A0)等为普通空格
+  s = s.replace(/[\u202f\u00a0\u2007\u2060]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2}):(\d{2})(?:\s*([AaPp][Mm]))?(?:\s*([+-]\d{2}):?(\d{2})?)?$/);
+  if (m) {
+    var year = +m[1], month = +m[2], day = +m[3], hour = +m[4], min = +m[5], sec = +m[6];
+    var ampm = m[7];
+    if (ampm) {
+      var isPM = /^p/i.test(ampm);
+      if (isPM && hour !== 12) hour += 12;
+      if (!isPM && hour === 12) hour = 0;
+    }
+    var offH = m[8], offM = m[9] || '00';
+    var iso = year + '-' + pad2(month) + '-' + pad2(day) + 'T' + pad2(hour) + ':' + pad2(min) + ':' + pad2(sec);
+    if (offH) iso += offH + ':' + offM;
+    var d1 = new Date(iso);
+    if (!isNaN(d1.getTime())) return d1;
+  }
+
+  var d2 = new Date(s);
+  if (!isNaN(d2.getTime())) return d2;
+
+  return null;
+}
+
+// 去掉 Excel 专用的首行 "sep=,"（部分导出工具会加，PapaParse 不认识这行，
+// 若不去掉会导致表头识别整体错位、所有数据被判定为无效）。
+function stripSepLine(text) {
+  var m = text.match(/^\uFEFF?sep=.?\r?\n/i);
+  return m ? text.slice(m[0].length) : text;
+}
+
+// ---- 4. 数值 / 单位归一化 ------------------------------------------------------
+// 把 HealthKit 原始单位换算成中文界面惯用的显示单位。
+var UNIT_CONVERT = {
+  // [matchUnit(小写)] -> {factor, targetUnit}
+  'mi': { factor: 1.609344, to: 'km' },
+  'mile': { factor: 1.609344, to: 'km' },
+  'miles': { factor: 1.609344, to: 'km' },
+  'km': { factor: 1, to: 'km' },
+  'm': { factor: 0.001, to: 'km' }, // 用于距离；长度类(身高/步长)会单独处理
+  'lb': { factor: 0.45359237, to: 'kg' },
+  'lbs': { factor: 0.45359237, to: 'kg' },
+  'kg': { factor: 1, to: 'kg' }
+};
+
+function normalizeValue(metricKey, rawValue, rawUnit) {
+  var v = parseFloat(String(rawValue).replace(/,/g, ''));
+  if (isNaN(v)) return null;
+  var unit = (rawUnit || '').trim();
+  var unitLower = unit.toLowerCase();
+
+  switch (metricKey) {
+    case 'DistanceWalkingRunning':
+      if (unitLower === 'm') return v / 1000;
+      if (unitLower === 'mi' || unitLower === 'mile' || unitLower === 'miles') return v * 1.609344;
+      return v; // 已经是 km 或未知单位时按原值
+    case 'Height':
+    case 'WalkingStepLength':
+      if (unitLower === 'm') return v * 100; // 米 -> 厘米
+      if (unitLower === 'cm') return v;
+      if (unitLower === 'in' || unitLower === 'inch' || unitLower === 'inches') return v * 2.54;
+      return v * 100; // 未知长度单位时假定为米
+    case 'BodyMass':
+      if (unitLower === 'lb' || unitLower === 'lbs') return v * 0.45359237;
+      return v; // kg
+    case 'WalkingSpeed':
+      if (unitLower === 'm/s' || unitLower === 'm\\/s') return v * 3.6; // m/s -> km/h
+      return v;
+    case 'WalkingAsymmetryPercentage':
+    case 'WalkingDoubleSupportPercentage':
+    case 'AppleWalkingSteadiness':
+      // HKUnit.percent(): 1.0 == 100%
+      if (v <= 1.0) return v * 100;
+      return v;
+    default:
+      return v;
+  }
+}
+
+// ---- 5. 将一个 CSV(已用 PapaParse 解析成二维数组，含表头) 转换为标准样本数组 --------
+function rowsToSamples(rows, metricKey) {
+  if (!rows || rows.length === 0) return [];
+  var headerMap = buildHeaderMap(rows[0]);
+  var samples = [];
+  for (var i = 1; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row || row.length === 0) continue;
+    // 跳过完全空行
+    var allEmpty = row.every(function (c) { return c === '' || c == null; });
+    if (allEmpty) continue;
+
+    var startRaw = headerMap.startDate !== undefined ? row[headerMap.startDate] : undefined;
+    var endRaw = headerMap.endDate !== undefined ? row[headerMap.endDate] : undefined;
+    var valueRaw = headerMap.value !== undefined ? row[headerMap.value] : undefined;
+    var unitRaw = headerMap.unit !== undefined ? row[headerMap.unit] : '';
+    var sourceRaw = headerMap.source !== undefined ? row[headerMap.source] : '';
+    var deviceRaw = headerMap.device !== undefined ? row[headerMap.device] : '';
+
+    var startDate = parseHealthDate(startRaw);
+    var endDate = parseHealthDate(endRaw) || startDate;
+    if (!startDate) continue;
+
+    samples.push({
+      start: startDate,
+      end: endDate,
+      rawValue: valueRaw,
+      value: normalizeValue(metricKey, valueRaw, unitRaw),
+      unit: unitRaw,
+      source: sourceRaw,
+      device: deviceRaw
+    });
+  }
+  samples.sort(function (a, b) { return a.start - b.start; });
+  return samples;
+}
+
+// ---- 6. 睡眠专用：类别值 -> 睡眠阶段 -------------------------------------------
+function sleepStageFromValue(raw) {
+  var s = String(raw || '');
+  if (/inbed/i.test(s) || s === '0') return 'inBed';
+  if (/deep/i.test(s) || s === '4') return 'deep';
+  if (/rem/i.test(s) || s === '5') return 'rem';
+  if (/core/i.test(s) || s === '3') return 'core';
+  if (/awake/i.test(s) || s === '2') return 'awake';
+  if (/asleep/i.test(s) || s === '1') return 'core'; // 旧版笼统 "Asleep" 归入核心睡眠
+  return 'core';
+}
+
+// 把一晚的起点定义为 "睡眠段开始时间"：中午12点前的算当天凌晨延续的那一晚，
+// 中午12点及以后开始的算次日凌晨的那一晚（即用早上醒来的日期作为该晚的 key）。
+function nightKeyForDate(d) {
+  var nd = new Date(d.getTime());
+  if (nd.getHours() >= 12) {
+    nd.setDate(nd.getDate() + 1);
+  }
+  return dayKey(nd);
+}
+
+function groupSleepByNight(samples) {
+  var nights = {}; // key(YYYY-MM-DD) -> {stages:{inBed,awake,core,deep,rem}, start,end}
+  samples.forEach(function (s) {
+    var stage = sleepStageFromValue(s.rawValue);
+    var key = nightKeyForDate(s.start);
+    if (!nights[key]) {
+      nights[key] = { key: key, stages: { inBed: 0, awake: 0, core: 0, deep: 0, rem: 0 }, start: s.start, end: s.end, segments: [] };
+    }
+    var n = nights[key];
+    var durMin = Math.max(0, (s.end - s.start) / 60000);
+    n.stages[stage] = (n.stages[stage] || 0) + durMin;
+    if (s.start < n.start) n.start = s.start;
+    if (s.end > n.end) n.end = s.end;
+    n.segments.push({ stage: stage, start: s.start, end: s.end });
+  });
+  var list = Object.keys(nights).map(function (k) { return nights[k]; });
+  list.sort(function (a, b) { return a.key < b.key ? -1 : 1; });
+  return list;
+}
+
+// 某些数据来源(或某些设备)只记录"在床上"，没有核心/深度/REM 阶段细分。
+// 这种情况下"睡眠时长"退化为用"在床时间"近似，避免界面显示成 0。
+function nightAsleepMinutes(night) {
+  var staged = night.stages.core + night.stages.deep + night.stages.rem;
+  if (staged > 0) return staged;
+  return night.stages.inBed;
+}
+function nightHasStageData(night) {
+  return (night.stages.core + night.stages.deep + night.stages.rem) > 0;
+}
+
+// ---- 7. 日期分桶 key 生成器 -----------------------------------------------------
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function dayKey(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function hourKey(d) { return dayKey(d) + ' ' + pad2(d.getHours()); }
+function monthKey(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1); }
+function yearKey(d) { return '' + d.getFullYear(); }
+// 周 key：以周日为一周起始（对齐 Apple Health 的周视图，本地一般周日开始）
+function startOfWeek(d) {
+  var nd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  nd.setDate(nd.getDate() - nd.getDay());
+  return nd;
+}
+function weekKey(d) { return dayKey(startOfWeek(d)); }
+
+// ---- 8. 通用聚合：把样本聚合到桶里 ----------------------------------------------
+function aggregateBuckets(samples, keyFn, aggType) {
+  var buckets = {}; // key -> {sum, count, min, max, last, lastTime}
+  samples.forEach(function (s) {
+    if (s.value == null || isNaN(s.value)) return;
+    var k = keyFn(s.start);
+    if (!buckets[k]) buckets[k] = { sum: 0, count: 0, min: s.value, max: s.value, last: s.value, lastTime: s.start };
+    var b = buckets[k];
+    b.sum += s.value;
+    b.count += 1;
+    if (s.value < b.min) b.min = s.value;
+    if (s.value > b.max) b.max = s.value;
+    if (s.start >= b.lastTime) { b.last = s.value; b.lastTime = s.start; }
+  });
+  var out = {};
+  Object.keys(buckets).forEach(function (k) {
+    var b = buckets[k];
+    var v;
+    if (aggType === 'sum') v = b.sum;
+    else if (aggType === 'avg') v = b.sum / b.count;
+    else if (aggType === 'latest') v = b.last;
+    else if (aggType === 'max') v = b.max;
+    else v = b.sum;
+    out[k] = { value: v, count: b.count, min: b.min, max: b.max };
+  });
+  return out;
+}
+
+// ---- 9. 构建某个时间范围内的图表序列 --------------------------------------------
+// range: 'D' | 'W' | 'M' | '6M' | 'Y'
+function buildSeries(samples, range, aggType, refDate) {
+  refDate = refDate || (samples.length ? samples[samples.length - 1].start : new Date());
+  var points = [];
+  if (range === 'D') {
+    var dayStart = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+    var buckets = aggregateBuckets(samples, hourKey, aggType);
+    for (var h = 0; h < 24; h++) {
+      var d = new Date(dayStart.getTime());
+      d.setHours(h);
+      var k = hourKey(d);
+      points.push({ date: d, key: k, value: buckets[k] ? buckets[k].value : null, count: buckets[k] ? buckets[k].count : 0 });
+    }
+  } else if (range === 'W') {
+    var wStart = startOfWeek(refDate);
+    var bucketsW = aggregateBuckets(samples, dayKey, aggType);
+    for (var i = 0; i < 7; i++) {
+      var dd = new Date(wStart.getTime());
+      dd.setDate(wStart.getDate() + i);
+      var kk = dayKey(dd);
+      points.push({ date: dd, key: kk, value: bucketsW[kk] ? bucketsW[kk].value : null, count: bucketsW[kk] ? bucketsW[kk].count : 0 });
+    }
+  } else if (range === 'M') {
+    var mStart = new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+    var daysInMonth = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0).getDate();
+    var bucketsM = aggregateBuckets(samples, dayKey, aggType);
+    for (var j = 0; j < daysInMonth; j++) {
+      var d2 = new Date(mStart.getTime());
+      d2.setDate(1 + j);
+      var k2 = dayKey(d2);
+      points.push({ date: d2, key: k2, value: bucketsM[k2] ? bucketsM[k2].value : null, count: bucketsM[k2] ? bucketsM[k2].count : 0 });
+    }
+  } else if (range === '6M') {
+    var bucketsSix = aggregateBuckets(samples, weekKey, aggType);
+    var wk = startOfWeek(refDate);
+    wk.setDate(wk.getDate() - 7 * 25);
+    for (var w = 0; w < 26; w++) {
+      var d3 = new Date(wk.getTime());
+      d3.setDate(wk.getDate() + 7 * w);
+      var k3 = weekKey(d3);
+      points.push({ date: d3, key: k3, value: bucketsSix[k3] ? bucketsSix[k3].value : null, count: bucketsSix[k3] ? bucketsSix[k3].count : 0 });
+    }
+  } else if (range === 'Y') {
+    var bucketsY = aggregateBuckets(samples, monthKey, aggType);
+    for (var m2 = 11; m2 >= 0; m2--) {
+      var d4 = new Date(refDate.getFullYear(), refDate.getMonth() - m2, 1);
+      var k4 = monthKey(d4);
+      points.push({ date: d4, key: k4, value: bucketsY[k4] ? bucketsY[k4].value : null, count: bucketsY[k4] ? bucketsY[k4].count : 0 });
+    }
+  }
+  return points;
+}
+
+// ---- 导出（Node 测试用；浏览器中忽略这段） --------------------------------------
+
+
+/* ============================================================
+   MODULE B: 配置 — 指标 / 分类 / 睡眠阶段 / 图标 / 说明文案
+   ============================================================ */
+// ---- 图标库：简洁几何风格线性图标 (内部 markup，由 svgIcon() 统一包裹 viewBox) ----
+var ICONS = {
+  steps: '<rect x="5" y="3" width="6" height="11" rx="3" fill="currentColor"/><rect x="13" y="9" width="6" height="11" rx="3" fill="currentColor" opacity=".55"/>',
+  distance: '<path d="M3 17c3-1 4-4 7-4s3.5 2.5 6.5 2.2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="0.2 3.4" fill="none"/><circle cx="18" cy="7" r="3" fill="currentColor"/><path d="M18 10.2v2.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  stairs: '<path d="M4 20v-4h4v-4h4V8h4V4h4" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  flame: '<path d="M12 21c4 0 6.5-2.8 6.5-6.3 0-3-1.8-4.6-2.8-6.6-.6 1.6-1.6 2.2-2.3 1.6.6-2.6-.3-5.4-2.6-7.2.4 2.6-.7 4.3-2.4 6-1.7 1.7-3 3.6-3 6.2C5.4 18.2 8 21 12 21z" fill="currentColor"/>',
+  bolt: '<path d="M13 2L4.5 13.2h5.7L9 22l9.5-12.3h-5.8L13 2z" fill="currentColor"/>',
+  ruler: '<path d="M12 3v18M8 6.2L12 3l4 3.2M8 17.8L12 21l4-3.2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  scale: '<circle cx="12" cy="13" r="8" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 13l3.6-4.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M9.2 4.2h5.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  gauge: '<path d="M4.5 17a7.5 7.5 0 1115 0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M12 17l3.6-4.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.5" fill="currentColor"/>',
+  stride: '<rect x="2.5" y="4" width="5" height="9" rx="2.5" fill="currentColor"/><rect x="16.5" y="11" width="5" height="9" rx="2.5" fill="currentColor" opacity=".55"/><path d="M9 8.3h6" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.4 2" stroke-linecap="round"/>',
+  asymmetry: '<rect x="4" y="9" width="5" height="12" rx="2.5" fill="currentColor"/><rect x="15" y="3" width="4" height="8" rx="2" fill="currentColor" opacity=".55"/>',
+  doubleSupport: '<rect x="4" y="5" width="6" height="14" rx="3" fill="currentColor"/><rect x="14" y="5" width="6" height="14" rx="3" fill="currentColor" opacity=".65"/>',
+  shieldCheck: '<path d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6l7-3z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M9 12.3l2 2 4-4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  headphone: '<path d="M4 14.5v-2a8 8 0 0116 0v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="2.5" y="13.5" width="4" height="7" rx="2" fill="currentColor"/><rect x="17.5" y="13.5" width="4" height="7" rx="2" fill="currentColor"/>',
+  moon: '<path d="M20 14.2A8.4 8.4 0 119.8 4a6.8 6.8 0 0010.2 10.2z" fill="currentColor"/>',
+  activityRing: '<circle cx="12" cy="12" r="7.2" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-dasharray="34 6"/>',
+  tape: '<rect x="4" y="9.5" width="16" height="6" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 9.5v2.2M12 9.5v3M16 9.5v2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  walker: '<circle cx="12" cy="5" r="2.3" fill="currentColor"/><path d="M12 7.6v5.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 9.6l-3.6 2.4M12 9.6l3.6 1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 12.8l-2.8 7M12 12.8l3.2 6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  equalizer: '<rect x="4" y="10" width="3" height="8" rx="1.5" fill="currentColor"/><rect x="10.5" y="6" width="3" height="12" rx="1.5" fill="currentColor"/><rect x="17" y="9" width="3" height="9" rx="1.5" fill="currentColor"/>',
+  search: '<circle cx="10.3" cy="10.3" r="6.3" stroke="currentColor" stroke-width="2" fill="none"/><path d="M19.5 19.5l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  chevronRight: '<path d="M9 5.5l6.5 6.5-6.5 6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  chevronLeft: '<path d="M15 5.5L8.5 12l6.5 6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  back: '<path d="M14.8 5L8 12l6.8 7" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  person: '<circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="12" cy="9.6" r="3.1" fill="currentColor"/><path d="M5.3 18.8c1.2-3.1 3.6-4.7 6.7-4.7s5.5 1.6 6.7 4.7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>',
+  tray: '<path d="M4 12l3-7h10l3 7M4 12v6a2 2 0 002 2h12a2 2 0 002-2v-6M4 12h5a1 1 0 011 1 2 2 0 004 0 1 1 0 011-1h5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>',
+  plus: '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
+  heartFriends: '<circle cx="8" cy="8" r="3.1" stroke="currentColor" stroke-width="1.8" fill="none"/><circle cx="17" cy="8" r="3.1" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M2.3 21c.6-3.5 2.9-5.4 5.7-5.4s5.1 1.9 5.7 5.4M12.3 21c.6-3.5 2.9-5.4 5.7-5.4s5.1 1.9 5.7 5.4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
+  grid: '<rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/><rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity=".45"/><rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity=".45"/><rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor"/>',
+  list: '<path d="M4 6.5h17M4 12.5h17M4 18.5h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  upload: '<path d="M12 4v11m0-11l4 4m-4-4l-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5 16.5v2A2.5 2.5 0 007.5 21h9a2.5 2.5 0 002.5-2.5v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>'
+};
+function svgIcon(key, size) {
+  size = size || 17;
+  return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '" fill="none">' + (ICONS[key] || '') + '</svg>';
+}
+
+// ---- 分类配置 ----
+var CATEGORIES = {
+  activity: { name: '活动', color: 'var(--cat-activity)', grad: 'linear-gradient(150deg, var(--cat-activity), var(--cat-activity-2))', icon: 'activityRing' },
+  body: { name: '身体测量', color: 'var(--cat-body)', grad: 'linear-gradient(150deg, var(--cat-body), var(--cat-body-2))', icon: 'tape' },
+  mobility: { name: '活动能力', color: 'var(--cat-mobility)', grad: 'linear-gradient(150deg, var(--cat-mobility), var(--cat-mobility-2))', icon: 'walker' },
+  hearing: { name: '听力', color: 'var(--cat-hearing)', grad: 'linear-gradient(150deg, var(--cat-hearing), var(--cat-hearing-2))', icon: 'equalizer' },
+  sleep: { name: '睡眠', color: 'var(--cat-sleep)', grad: 'linear-gradient(150deg, var(--cat-sleep), var(--cat-sleep-2))', icon: 'moon' }
+};
+var CATEGORY_ORDER = ['activity', 'body', 'mobility', 'hearing', 'sleep'];
+
+// ---- 指标配置 ----
+var METRICS = {
+  StepCount: {
+    name: '步数', category: 'activity', unit: '步', decimals: 0, agg: 'sum', chartKind: 'bar', icon: 'steps',
+    about: '「健康」记录你每天行走的步数。iPhone 和 Apple Watch 会通过内置传感器自动检测并计入你的步数，帮助你了解日常活动量的变化趋势。'
+  },
+  DistanceWalkingRunning: {
+    name: '步行+跑步距离', category: 'activity', unit: '公里', decimals: 2, agg: 'sum', chartKind: 'bar', icon: 'distance',
+    about: '记录你通过步行或跑步移动的距离。iPhone 会根据随身携带设备时的运动数据估算距离，佩戴 Apple Watch 时结果通常会更加精确。'
+  },
+  FlightsClimbed: {
+    name: '已爬楼层', category: 'activity', unit: '层', decimals: 0, agg: 'sum', chartKind: 'bar', icon: 'stairs',
+    about: '「已爬楼层」利用 iPhone 或 Apple Watch 中的气压计，将大约3米（10英尺）的连续上升记为爬一层楼梯。'
+  },
+  ActiveEnergyBurned: {
+    name: '活动能量', category: 'activity', unit: '千卡', decimals: 0, agg: 'sum', chartKind: 'bar', icon: 'flame',
+    about: '指你站立和运动时，除基本新陈代谢外额外消耗的能量，包含日常活动和锻炼。Apple Watch 会结合心率与运动数据估算这一数值。'
+  },
+  BasalEnergyBurned: {
+    name: '静息能量', category: 'activity', unit: '千卡', decimals: 0, agg: 'sum', chartKind: 'bar', icon: 'bolt',
+    about: '指身体在静息状态下，为维持呼吸、心跳等基本生命活动所消耗的能量，也称基础代谢消耗，主要根据年龄、性别、身高和体重估算。'
+  },
+  Height: {
+    name: '身高', category: 'body', unit: 'cm', decimals: 1, agg: 'latest', chartKind: 'line', icon: 'ruler',
+    about: '记录你的身高数据，可用于计算体重指数（BMI）等其它健康指标。'
+  },
+  BodyMass: {
+    name: '体重', category: 'body', unit: '公斤', decimals: 1, agg: 'avg', chartKind: 'line', icon: 'scale',
+    about: '记录你的体重变化。数据可能来自手动输入，也可能来自支持连接「健康」的智能体重秤。'
+  },
+  WalkingSpeed: {
+    name: '步行速度', category: 'mobility', unit: '公里/小时', decimals: 2, agg: 'avg', chartKind: 'line', icon: 'gauge',
+    about: '「步行速度」是 Apple Watch 通过测量你日常步行时的平均速度得出的移动能力指标，数值越高通常代表行走能力越好。'
+  },
+  WalkingStepLength: {
+    name: '步行步长', category: 'mobility', unit: 'cm', decimals: 0, agg: 'avg', chartKind: 'line', icon: 'stride',
+    about: '指行走时单脚迈出一步的平均距离，由 Apple Watch 在你日常步行过程中自动测量。'
+  },
+  WalkingAsymmetryPercentage: {
+    name: '步态不对称百分比', category: 'mobility', unit: '%', decimals: 1, agg: 'avg', chartKind: 'line', pct: true, icon: 'asymmetry',
+    about: '衡量左右脚步态的对称程度。数值越高，表示两侧步伐时长的差异越大，可能提示行走方式存在一侧倾向。'
+  },
+  WalkingDoubleSupportPercentage: {
+    name: '双脚支撑时间百分比', category: 'mobility', unit: '%', decimals: 1, agg: 'avg', chartKind: 'line', pct: true, icon: 'doubleSupport',
+    about: '指行走过程中两脚同时着地的时间占比，该比例通常随步速加快而降低，是评估步态稳定性的参考指标之一。'
+  },
+  AppleWalkingSteadiness: {
+    name: '步行稳定性', category: 'mobility', unit: '%', decimals: 0, agg: 'latest', chartKind: 'line', pct: true, icon: 'shieldCheck',
+    about: '综合步速、步长、双脚支撑时间等多项步态数据，评估跌倒的相对风险，数值越高代表步态越稳健。'
+  },
+  HeadphoneAudioExposure: {
+    name: '耳机音量', category: 'hearing', unit: '分贝', decimals: 0, agg: 'avg', chartKind: 'bar', icon: 'headphone',
+    about: '当你使用兼容耳机播放音频时，iPhone 或 Apple Watch 会测量声音的响度。长时间暴露在较高音量下可能影响听力健康。'
+  },
+  SleepAnalysis: {
+    name: '睡眠', category: 'sleep', unit: '', decimals: 0, agg: 'special', chartKind: 'sleep', icon: 'moon',
+    about: '记录你每晚的睡眠时长与睡眠阶段，包括核心睡眠、深度睡眠和快速眼动（REM）睡眠。数据通常来自 Apple Watch 或 iPhone 的睡眠追踪功能。'
+  }
+};
+var SUMMARY_ORDER = ['StepCount', 'ActiveEnergyBurned', 'DistanceWalkingRunning', 'FlightsClimbed', 'BasalEnergyBurned',
+  'SleepAnalysis', 'BodyMass', 'Height', 'WalkingSpeed', 'WalkingStepLength',
+  'AppleWalkingSteadiness', 'WalkingAsymmetryPercentage', 'WalkingDoubleSupportPercentage', 'HeadphoneAudioExposure'];
+
+// ---- 睡眠阶段配置 ----
+var SLEEP_STAGES = {
+  awake: { name: '清醒', color: 'var(--stage-awake)', order: 0 },
+  rem: { name: '快速眼动', color: 'var(--stage-rem)', order: 1 },
+  core: { name: '核心睡眠', color: 'var(--stage-core)', order: 2 },
+  deep: { name: '深度睡眠', color: 'var(--stage-deep)', order: 3 },
+  inBed: { name: '在床上', color: 'var(--stage-inbed)', order: 4 }
+};
+var SLEEP_STAGE_STACK_ORDER = ['inBed', 'deep', 'core', 'rem', 'awake'];
+
+
+/* ============================================================
+   MODULE C: 格式化工具函数
+   ============================================================ */
+var WEEKDAY_SHORT = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+var MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+function formatNumber(v, decimals) {
+  if (v == null || isNaN(v)) return '--';
+  decimals = decimals == null ? 0 : decimals;
+  return v.toLocaleString('zh-CN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function formatMetricValue(metricKey, value, opts) {
+  opts = opts || {};
+  var cfg = METRICS[metricKey];
+  if (value == null || isNaN(value)) return '--';
+  var decimals = opts.decimals != null ? opts.decimals : cfg.decimals;
+  return formatNumber(value, decimals);
+}
+
+function metricUnitLabel(metricKey) {
+  var cfg = METRICS[metricKey];
+  return cfg.unit || '';
+}
+
+function formatDayLabel(d) {
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+}
+function formatDayLabelShort(d) {
+  return d.getDate() + '';
+}
+function formatWeekdayShort(d) { return WEEKDAY_SHORT[d.getDay()]; }
+function formatYearMonth(d) { return d.getFullYear() + '年' + MONTH_NAMES[d.getMonth()]; }
+function formatMonthShort(d) { return MONTH_NAMES[d.getMonth()]; }
+
+function formatClock(d, withPeriod) {
+  var h = d.getHours(), m = d.getMinutes();
+  var mm = (m < 10 ? '0' : '') + m;
+  if (withPeriod) {
+    var period = h < 12 ? '上午' : '下午';
+    var h12 = h % 12; if (h12 === 0) h12 = 12;
+    return period + h12 + ':' + mm;
+  }
+  return h + ':' + mm;
+}
+
+function formatDateTimeFull(d) {
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + formatClock(d, true);
+}
+
+function formatDuration(totalMinutes) {
+  if (totalMinutes == null || isNaN(totalMinutes)) return '--';
+  var h = Math.floor(totalMinutes / 60);
+  var m = Math.round(totalMinutes % 60);
+  if (m === 60) { h += 1; m = 0; }
+  if (h <= 0) return m + '分钟';
+  return h + '小时' + (m > 0 ? m + '分钟' : '');
+}
+
+// 区间标题：根据 range 与 refDate 生成 "‹ 日期范围 ›" 中间的文字
+function periodLabel(range, refDate) {
+  if (range === 'D') return formatDayLabel(refDate) + ' ' + formatWeekdayShort(refDate);
+  if (range === 'W') {
+    var s = startOfWeek(refDate);
+    var e = new Date(s.getTime()); e.setDate(s.getDate() + 6);
+    if (s.getMonth() === e.getMonth()) return (s.getMonth() + 1) + '月' + s.getDate() + '日 – ' + e.getDate() + '日';
+    return (s.getMonth() + 1) + '月' + s.getDate() + '日 – ' + (e.getMonth() + 1) + '月' + e.getDate() + '日';
+  }
+  if (range === 'M') return formatYearMonth(refDate);
+  if (range === '6M') {
+    var e2 = new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+    var s2 = new Date(e2.getFullYear(), e2.getMonth() - 5, 1);
+    return s2.getFullYear() + '年' + MONTH_NAMES[s2.getMonth()] + ' – ' + (e2.getFullYear() !== s2.getFullYear() ? e2.getFullYear() + '年' : '') + MONTH_NAMES[e2.getMonth()];
+  }
+  if (range === 'Y') return '' + refDate.getFullYear();
+  return '';
+}
+
+// 根据 range 计算「上一段」「下一段」的参考日期，并判断下一段是否超出今天（禁用右箭头）
+function shiftRefDate(range, refDate, dir) {
+  var d = new Date(refDate.getTime());
+  if (range === 'D') d.setDate(d.getDate() + dir);
+  else if (range === 'W') d.setDate(d.getDate() + dir * 7);
+  else if (range === 'M') d.setMonth(d.getMonth() + dir);
+  else if (range === '6M') d.setMonth(d.getMonth() + dir * 6);
+  else if (range === 'Y') d.setFullYear(d.getFullYear() + dir);
+  return d;
+}
+function periodStart(range, refDate) {
+  if (range === 'D') return new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+  if (range === 'W') return startOfWeek(refDate);
+  if (range === 'M') return new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+  if (range === '6M') return new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+  if (range === 'Y') return new Date(refDate.getFullYear(), 0, 1);
+  return refDate;
+}
+function isFuturePeriod(range, refDate) {
+  var now = new Date();
+  var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return periodStart(range, refDate).getTime() > todayStart.getTime();
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function uniqueSources(samples) {
+  var set = {};
+  samples.forEach(function (s) { if (s.source) set[s.source] = true; });
+  return Object.keys(set);
+}
+
+function averageOf(points) {
+  var vals = points.filter(function (p) { return p.value != null && !isNaN(p.value); }).map(function (p) { return p.value; });
+  if (!vals.length) return null;
+  return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+}
+function sumOf(points) {
+  var vals = points.filter(function (p) { return p.value != null && !isNaN(p.value); }).map(function (p) { return p.value; });
+  if (!vals.length) return null;
+  return vals.reduce(function (a, b) { return a + b; }, 0);
+}
+function maxOf(points) {
+  var vals = points.filter(function (p) { return p.value != null && !isNaN(p.value); }).map(function (p) { return p.value; });
+  if (!vals.length) return null;
+  return Math.max.apply(null, vals);
+}
+function minOf(points) {
+  var vals = points.filter(function (p) { return p.value != null && !isNaN(p.value); }).map(function (p) { return p.value; });
+  if (!vals.length) return null;
+  return Math.min.apply(null, vals);
+}
+
+
+/* ============================================================
+   MODULE D: 应用状态 + 导航路由 (push/pop/switchTab)
+   ============================================================ */
+var APP = { dataset: {}, sleepNights: [], allSamplesFlat: [], lastUpdated: null };
+var navViewportEl = null;
+var screenStack = [];
+var activeTab = 'summary';
+var PUSH_MS = 380;
+
+function initNav() { navViewportEl = document.getElementById('nav-viewport'); }
+
+function createScreen() {
+  var el = document.createElement('div');
+  el.className = 'nav-screen';
+  el._chartInstances = [];
+  attachScrollCollapse(el);
+  return el;
+}
+function registerChart(screenEl, chart) { screenEl._chartInstances.push(chart); return chart; }
+function destroyScreenCharts(el) {
+  (el._chartInstances || []).forEach(function (c) { try { c.destroy(); } catch (e) {} });
+  el._chartInstances = [];
+}
+function removeScreenEl(el) {
+  destroyScreenCharts(el);
+  if (el.parentNode) el.parentNode.removeChild(el);
+}
+
+function attachScrollCollapse(screenEl) {
+  screenEl.addEventListener('scroll', function () {
+    var bar = screenEl.querySelector('.nav-bar');
+    if (!bar) return;
+    if (screenEl.scrollTop > 6) bar.classList.add('collapsed');
+    else bar.classList.remove('collapsed');
+  }, { passive: true });
+}
+
+function pushScreen(el) {
+  navViewportEl.appendChild(el);
+  el.classList.add('enter-push');
+  void el.offsetWidth;
+  var prev = screenStack[screenStack.length - 1];
+  if (prev) {
+    prev.classList.add('mid-transition'); // 动画期间需要可见，才能看到位移+调暗的过渡效果
+    prev.classList.add('buried', 'bury-target');
+  }
+  el.classList.remove('enter-push');
+  screenStack.push(el);
+  if (prev) {
+    setTimeout(function () { prev.classList.remove('mid-transition'); }, PUSH_MS);
+  }
+}
+
+function popScreen() {
+  if (screenStack.length < 2) return;
+  var top = screenStack.pop();
+  var prev = screenStack[screenStack.length - 1];
+  if (prev) prev.classList.add('mid-transition');
+  top.classList.add('enter-push');
+  if (prev) prev.classList.remove('buried', 'bury-target');
+  setTimeout(function () {
+    removeScreenEl(top);
+    if (prev) prev.classList.remove('mid-transition');
+  }, PUSH_MS);
+}
+
+function resetToRoot(el) {
+  screenStack.forEach(function (s) { removeScreenEl(s); });
+  screenStack = [];
+  navViewportEl.appendChild(el);
+  screenStack.push(el);
+}
+
+// 每个 screen 内部：凡是带 data-push / data-pop 的元素统一走这里，
+// 需要闭包状态的交互（分段控件、翻页箭头、加载更多等）由各自构建函数单独绑定。
+function wireDelegation(screenEl) {
+  screenEl.addEventListener('click', function (e) {
+    var popEl = e.target.closest('[data-pop]');
+    if (popEl) { popScreen(); return; }
+    var t = e.target.closest('[data-push]');
+    if (!t) return;
+    var kind = t.getAttribute('data-push');
+    if (kind === 'metric') pushScreen(renderMetricDetailScreen(t.getAttribute('data-metric'), t.getAttribute('data-back')));
+    else if (kind === 'category') pushScreen(renderCategoryScreen(t.getAttribute('data-category')));
+    else if (kind === 'sleep') pushScreen(renderSleepDetailScreen(t.getAttribute('data-back')));
+    else if (kind === 'alldata') pushScreen(renderAllDataScreen(t.getAttribute('data-metric')));
+  });
+}
+
+// 通用导航栏 (大标题 + 折叠小标题 + 返回按钮 + 右侧操作区)
+function navBarHtml(opts) {
+  opts = opts || {};
+  var back = opts.backLabel !== undefined
+    ? '<button class="nav-back" data-pop="1">' + svgIcon('back', 20) + '<span>' + escapeHtml(opts.backLabel) + '</span></button>'
+    : '<span style="width:44px"></span>';
+  var actions = opts.actionsHtml || '<span style="width:44px"></span>';
+  var subtitle = opts.subtitle ? '<div class="nav-subtitle">' + escapeHtml(opts.subtitle) + '</div>' : '';
+  return (
+    '<div class="nav-bar">' +
+      '<div class="nav-bar-inner">' + back +
+        '<span class="nav-bar-title-small">' + escapeHtml(opts.title || '') + '</span>' +
+        '<div class="nav-bar-actions">' + actions + '</div>' +
+      '</div>' +
+      '<div class="nav-large-title-wrap"><div class="nav-large-title">' + escapeHtml(opts.title || '') + '</div>' + subtitle + '</div>' +
+    '</div>'
+  );
+}
+
+function switchTab(tabId, skipButtons) {
+  activeTab = tabId;
+  if (!skipButtons) {
+    document.querySelectorAll('.tab-item').forEach(function (btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === tabId);
+    });
+  }
+  var screen;
+  if (tabId === 'summary') screen = renderSummaryScreen();
+  else screen = renderBrowseRootScreen();
+  resetToRoot(screen);
+}
+
+
+/* ============================================================
+   MODULE E: 文件加载 (拖拽/选择 zip → JSZip → PapaParse → dataset)
+   ============================================================ */
+function setProgress(pct, text) {
+  var box = document.getElementById('upload-progress');
+  box.classList.add('show');
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-text').textContent = text;
+}
+function showUploadError(msg) {
+  var el = document.getElementById('upload-error');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+function clearUploadError() {
+  document.getElementById('upload-error').classList.remove('show');
+  document.getElementById('upload-progress').classList.remove('show');
+}
+
+function computeLastUpdated(dataset) {
+  var max = null;
+  Object.keys(dataset).forEach(function (k) {
+    (dataset[k] || []).forEach(function (s) { if (s.end && (!max || s.end > max)) max = s.end; });
+  });
+  return max;
+}
+
+async function processZipFile(file) {
+  clearUploadError();
+  setProgress(4, '正在读取压缩包…');
+  try {
+    var buf = await file.arrayBuffer();
+    var zip = await JSZip.loadAsync(buf);
+    var entries = Object.keys(zip.files).filter(function (n) {
+      return !zip.files[n].dir && /\.csv$/i.test(n);
+    });
+    if (!entries.length) throw new Error('压缩包内没有找到 .csv 文件');
+
+    var dataset = {};
+    var matchedCount = 0;
+    for (var i = 0; i < entries.length; i++) {
+      var name = entries[i];
+      setProgress(6 + Math.round((i / entries.length) * 82), '正在解析文件 ' + (i + 1) + ' / ' + entries.length + '…');
+      var id = extractIdentifier(name);
+      if (!id || !METRICS[id.key]) continue;
+      var text = await zip.files[name].async('string');
+      text = stripSepLine(text);
+      var parsed = Papa.parse(text, { skipEmptyLines: true });
+      var samples = rowsToSamples(parsed.data, id.key);
+      dataset[id.key] = (dataset[id.key] || []).concat(samples);
+      matchedCount++;
+      // 让出主线程，避免大文件解析时界面完全冻结
+      await new Promise(function (r) { setTimeout(r, 0); });
+    }
+    if (!matchedCount) {
+      throw new Error('未能识别任何 HealthKit 数据类型。请确认这是「Simple Health Export CSV」导出的 zip 文件');
+    }
+    setProgress(95, '正在生成图表…');
+    Object.keys(dataset).forEach(function (k) { dataset[k].sort(function (a, b) { return a.start - b.start; }); });
+    APP.dataset = dataset;
+    APP.sleepNights = dataset.SleepAnalysis ? groupSleepByNight(dataset.SleepAnalysis) : [];
+    APP.lastUpdated = computeLastUpdated(dataset);
+    setProgress(100, '完成');
+    setTimeout(launchApp, 200);
+  } catch (err) {
+    console.error(err);
+    showUploadError('解析失败：' + (err && err.message ? err.message : '未知错误')) ;
+    document.getElementById('upload-progress').classList.remove('show');
+  }
+}
+
+function launchApp() {
+  document.getElementById('upload-overlay').style.display = 'none';
+  initNav();
+  switchTab('summary');
+}
+
+/* ---------------- 示例数据生成（无需真实 zip 即可预览界面） ---------------- */
+function rnd(a, b) { return a + Math.random() * (b - a); }
+
+function generateSampleDataset() {
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var days = 420;
+  var ds = {};
+  ['StepCount', 'DistanceWalkingRunning', 'FlightsClimbed', 'ActiveEnergyBurned', 'BasalEnergyBurned',
+    'WalkingSpeed', 'WalkingStepLength', 'WalkingAsymmetryPercentage', 'WalkingDoubleSupportPercentage',
+    'AppleWalkingSteadiness', 'HeadphoneAudioExposure', 'Height', 'BodyMass'].forEach(function (k) { ds[k] = []; });
+  var sleep = [];
+  function push(key, s, e, v, src) {
+    ds[key].push({ start: s, end: e, value: v, rawValue: v, unit: '', source: src || 'iPhone（示例数据）', device: '' });
+  }
+  for (var i = days; i >= 0; i--) {
+    var d = new Date(today.getTime()); d.setDate(d.getDate() - i);
+    var y = d.getFullYear(), mo = d.getMonth(), da = d.getDate();
+    var n = 5 + Math.floor(rnd(0, 6));
+    for (var j = 0; j < n; j++) {
+      var h = Math.floor(rnd(7, 22));
+      var s = new Date(y, mo, da, h, Math.floor(rnd(0, 59)));
+      var e = new Date(s.getTime() + rnd(5, 30) * 60000);
+      push('StepCount', s, e, Math.round(rnd(100, 1200)));
+      push('DistanceWalkingRunning', s, e, +(rnd(0.05, 0.8)).toFixed(3));
+    }
+    if (Math.random() < 0.6) {
+      var fs = new Date(y, mo, da, Math.floor(rnd(8, 20)), 0);
+      push('FlightsClimbed', fs, fs, Math.round(rnd(1, 6)));
+    }
+    for (var hh = 0; hh < 24; hh++) {
+      var hs = new Date(y, mo, da, hh, 0), he = new Date(hs.getTime() + 3600000);
+      push('ActiveEnergyBurned', hs, he, +(rnd(3, 90)).toFixed(2), 'Apple Watch（示例数据）');
+    }
+    for (var hh2 = 0; hh2 < 24; hh2 += 4) {
+      var bs = new Date(y, mo, da, hh2, 0), be = new Date(bs.getTime() + 4 * 3600000);
+      push('BasalEnergyBurned', bs, be, +(rnd(160, 260)).toFixed(2), 'Apple Watch（示例数据）');
+    }
+    if (Math.random() < 0.5) {
+      var ws = new Date(y, mo, da, 18, 0);
+      push('WalkingSpeed', ws, ws, +(rnd(1.0, 1.5) * 3.6).toFixed(2), 'Apple Watch（示例数据）');
+      push('WalkingStepLength', ws, ws, Math.round(rnd(0.6, 0.75) * 100), 'Apple Watch（示例数据）');
+      push('WalkingAsymmetryPercentage', ws, ws, +(rnd(0, 6)).toFixed(1), 'Apple Watch（示例数据）');
+      push('WalkingDoubleSupportPercentage', ws, ws, +(rnd(20, 30)).toFixed(1), 'Apple Watch（示例数据）');
+    }
+    if (Math.random() < 0.3) {
+      var sts = new Date(y, mo, da, 21, 0);
+      push('AppleWalkingSteadiness', sts, sts, Math.round(rnd(75, 99)), 'iPhone（示例数据）');
+    }
+    if (Math.random() < 0.4) {
+      var hp = new Date(y, mo, da, 20, 0);
+      push('HeadphoneAudioExposure', hp, new Date(hp.getTime() + 40 * 60000), Math.round(rnd(58, 88)), 'AirPods Pro（示例数据）');
+    }
+    if (Math.random() < 0.05) {
+      var bm = new Date(y, mo, da, 7, 30);
+      push('BodyMass', bm, bm, +(rnd(63, 68)).toFixed(1), '智能体重秤（示例数据）');
+    }
+    if (Math.random() < 0.92) {
+      var cursor = new Date(y, mo, da, Math.random() < 0.5 ? 23 : 22, Math.floor(rnd(0, 59)));
+      var segs = [['awake', rnd(2, 12)]];
+      var cycles = 3 + Math.floor(rnd(0, 3));
+      for (var c = 0; c < cycles; c++) { segs.push(['core', rnd(30, 65)]); segs.push(['deep', rnd(5, 25)]); segs.push(['rem', rnd(10, 30)]); }
+      segs.forEach(function (pair) {
+        var st = cursor, en = new Date(st.getTime() + pair[1] * 60000);
+        sleep.push({ start: st, end: en, value: null, rawValue: pair[0], unit: '', source: 'Apple Watch（示例数据）', device: '' });
+        cursor = en;
+      });
+    }
+  }
+  push('Height', new Date(today.getTime() - 300 * 86400000), new Date(today.getTime() - 300 * 86400000), 172);
+  ds.SleepAnalysis = sleep;
+  return ds;
+}
+
+function loadSampleData() {
+  clearUploadError();
+  setProgress(35, '正在生成示例数据…');
+  setTimeout(function () {
+    var dataset = generateSampleDataset();
+    APP.dataset = dataset;
+    APP.sleepNights = groupSleepByNight(dataset.SleepAnalysis);
+    APP.lastUpdated = computeLastUpdated(dataset);
+    setProgress(100, '完成');
+    setTimeout(launchApp, 180);
+  }, 60);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var dz = document.getElementById('dropzone');
+  var input = document.getElementById('file-input');
+  input.addEventListener('change', function (e) {
+    if (e.target.files && e.target.files[0]) processZipFile(e.target.files[0]);
+  });
+  ['dragenter', 'dragover'].forEach(function (evt) {
+    dz.addEventListener(evt, function (e) { e.preventDefault(); dz.classList.add('dragover'); });
+  });
+  ['dragleave', 'drop'].forEach(function (evt) {
+    dz.addEventListener(evt, function (e) { e.preventDefault(); dz.classList.remove('dragover'); });
+  });
+  dz.addEventListener('drop', function (e) {
+    var f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) processZipFile(f);
+  });
+  document.getElementById('sample-btn').addEventListener('click', loadSampleData);
+  document.querySelectorAll('.tab-item').forEach(function (btn) {
+    btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
+  });
+});
+
+
+/* ============================================================
+   MODULE F: 视图渲染 — 摘要 / 共享 / 浏览
+   ============================================================ */
+/* ---------------- 颜色/格式小工具 ---------------- */
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function catColorVarName(catKey) { return '--cat-' + catKey; }
+function hexToRgba(hex, alpha) {
+  hex = (hex || '#999999').replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map(function (c) { return c + c; }).join('');
+  var r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+function emptyStateHtml(title, sub, spanGrid) {
+  return '<div class="empty-state"' + (spanGrid ? ' style="grid-column:1/-1"' : '') + '>' + svgIcon('tray', 40) +
+    '<div class="es-title">' + escapeHtml(title) + '</div><div class="es-sub">' + escapeHtml(sub || '') + '</div></div>';
+}
+function dateFromKey(key) { var p = key.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+function formatNightDateLabel(key) {
+  var todayKey = dayKey(new Date());
+  if (key === todayKey) return '今天';
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  if (key === dayKey(y)) return '昨晚';
+  return formatDayLabel(dateFromKey(key));
+}
+
+/* ---------------- 最新数值 (摘要卡片 / 分类行 共用) ---------------- */
+function computeLatestHeadline(key) {
+  if (key === 'SleepAnalysis') {
+    var nights = APP.sleepNights;
+    if (!nights.length) return { isEmpty: true };
+    var last = nights[nights.length - 1];
+    var asleep = nightAsleepMinutes(last);
+    return { isEmpty: false, valueText: formatDuration(asleep), unit: '', dateLabel: formatNightDateLabel(last.key) };
+  }
+  var cfg = METRICS[key];
+  var samples = APP.dataset[key] || [];
+  if (!samples.length) return { isEmpty: true };
+  if (cfg.agg === 'sum') {
+    var lastSample = samples[samples.length - 1];
+    var targetKey = dayKey(lastSample.start);
+    var total = 0;
+    samples.forEach(function (s) { if (dayKey(s.start) === targetKey && s.value != null) total += s.value; });
+    var label = targetKey === dayKey(new Date()) ? '今天' : formatDayLabel(lastSample.start);
+    return { isEmpty: false, valueText: formatMetricValue(key, total), unit: cfg.unit, dateLabel: label };
+  }
+  var last2 = samples[samples.length - 1];
+  return { isEmpty: false, valueText: formatMetricValue(key, last2.value), unit: cfg.unit, dateLabel: formatDateTimeFull(last2.start) };
+}
+function getLatestValueText(key) {
+  var h = computeLatestHeadline(key);
+  if (h.isEmpty) return '无数据';
+  return h.valueText + (h.unit ? ' ' + h.unit : '');
+}
+
+/* ---------------- 摘要页 ---------------- */
+function buildMetricCardHtml(key) {
+  var cfg = METRICS[key];
+  var cat = CATEGORIES[cfg.category];
+  var h = computeLatestHeadline(key);
+  var pushAttr = key === 'SleepAnalysis' ? 'data-push="sleep" data-back="摘要"' : ('data-push="metric" data-metric="' + key + '" data-back="摘要"');
+  var valueHtml = h.isEmpty
+    ? '<span style="color:var(--label-3);font-size:14px">暂无数据</span>'
+    : ('<b>' + h.valueText + '</b>' + (h.unit ? '<span class="unit">' + escapeHtml(h.unit) + '</span>' : ''));
+  return (
+    '<div class="metric-card" ' + pushAttr + ' data-name="' + escapeHtml(cfg.name) + '">' +
+      '<div class="metric-card-head">' +
+        '<div class="row-icon" style="background:' + cat.grad + '">' + svgIcon(cfg.icon, 12) + '</div>' +
+        '<div class="metric-card-name">' + escapeHtml(cfg.name) + '</div>' +
+      '</div>' +
+      '<div class="metric-card-value">' + valueHtml + '</div>' +
+      '<div class="metric-card-date">' + (h.isEmpty ? '' : escapeHtml(h.dateLabel)) + '</div>' +
+      '<div class="metric-card-spark" data-spark="' + key + '"></div>' +
+    '</div>'
+  );
+}
+
+function lastNDaysValues(key, n, refDate) {
+  refDate = refDate || (APP.lastUpdated || new Date());
+  var cfg = METRICS[key];
+  var aggType = cfg.agg === 'sum' ? 'sum' : (cfg.agg === 'avg' ? 'avg' : 'latest');
+  var buckets = aggregateBuckets(APP.dataset[key] || [], dayKey, aggType);
+  var arr = [];
+  for (var i = n - 1; i >= 0; i--) {
+    var d = new Date(refDate.getTime()); d.setDate(d.getDate() - i);
+    var k = dayKey(d);
+    arr.push(buckets[k] ? buckets[k].value : null);
+  }
+  return arr;
+}
+function lastNNightsAsleepMinutes(n) {
+  return APP.sleepNights.slice(-n).map(nightAsleepMinutes);
+}
+
+function drawSparkline(screenEl, key) {
+  var container = screenEl.querySelector('[data-spark="' + key + '"]');
+  if (!container || typeof Chart === 'undefined') return;
+  var cfg = METRICS[key];
+  var canvas = document.createElement('canvas');
+  container.appendChild(canvas);
+  var values, isBarKind;
+  if (key === 'SleepAnalysis') { values = lastNNightsAsleepMinutes(14); isBarKind = true; }
+  else { values = lastNDaysValues(key, 14); isBarKind = (cfg.chartKind === 'bar'); }
+  if (values.every(function (v) { return v == null; })) return;
+  var color = cssVar(catColorVarName(cfg ? cfg.category : 'sleep'));
+  var chart = new Chart(canvas.getContext('2d'), {
+    type: isBarKind ? 'bar' : 'line',
+    data: {
+      labels: values.map(function (_, i) { return i; }),
+      datasets: [{
+        data: values,
+        backgroundColor: isBarKind ? color : hexToRgba(color, 0.16),
+        borderColor: color,
+        borderWidth: isBarKind ? 0 : 1.6,
+        borderRadius: isBarKind ? 1.5 : 0,
+        fill: !isBarKind,
+        pointRadius: 0,
+        tension: .35,
+        spanGaps: true,
+        maxBarThickness: 7
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, events: [],
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: { x: { display: false }, y: { display: false, beginAtZero: isBarKind } },
+      layout: { padding: 0 }
+    }
+  });
+  registerChart(screenEl, chart);
+}
+
+function renderSummaryScreen() {
+  var el = createScreen();
+  var metricsPresent = SUMMARY_ORDER.filter(function (k) { return APP.dataset[k] && APP.dataset[k].length; });
+  var cardsHtml = metricsPresent.map(buildMetricCardHtml).join('');
+  el.innerHTML =
+    navBarHtml({ title: '摘要' }) +
+    '<div class="search-wrap"><div class="search-box">' + svgIcon('search', 16) + '<input type="text" id="summary-search" placeholder="搜索"></div></div>' +
+    '<div class="card-header">收藏项目</div>' +
+    '<div class="metric-grid" id="summary-grid">' + (cardsHtml || emptyStateHtml('暂无数据', '请先导入健康数据 zip 文件', true)) + '</div>' +
+    '<div class="scroll-pad-bottom"></div>';
+  wireDelegation(el);
+  requestAnimationFrame(function () { metricsPresent.forEach(function (k) { drawSparkline(el, k); }); });
+  var searchInput = el.querySelector('#summary-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', function () {
+      var q = searchInput.value.trim().toLowerCase();
+      el.querySelectorAll('.metric-card').forEach(function (card) {
+        var name = (card.getAttribute('data-name') || '').toLowerCase();
+        card.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
+      });
+    });
+  }
+  return el;
+}
+
+/* ---------------- 浏览：分类根页面 ---------------- */
+function renderBrowseRootScreen() {
+  var el = createScreen();
+  var rows = CATEGORY_ORDER.map(function (catKey) {
+    var cat = CATEGORIES[catKey];
+    var keys = Object.keys(METRICS).filter(function (k) { return METRICS[k].category === catKey && APP.dataset[k] && APP.dataset[k].length; });
+    if (!keys.length) return '';
+    return (
+      '<div class="list-row inset" data-push="category" data-category="' + catKey + '" data-name="' + escapeHtml(cat.name) + '">' +
+        '<div class="row-icon lg" style="background:' + cat.grad + '">' + svgIcon(cat.icon, 18) + '</div>' +
+        '<div class="row-title">' + escapeHtml(cat.name) + '<span class="row-sub">' + keys.length + ' 项数据</span></div>' +
+        '<span class="row-chevron">' + svgIcon('chevronRight', 15) + '</span>' +
+      '</div>'
+    );
+  }).join('');
+  el.innerHTML =
+    navBarHtml({ title: '浏览' }) +
+    '<div class="search-wrap"><div class="search-box">' + svgIcon('search', 16) + '<input type="text" id="browse-search" placeholder="搜索"></div></div>' +
+    '<div class="card-header">健康数据类别</div>' +
+    '<div class="card" id="browse-list">' + (rows || emptyStateHtml('暂无数据', '请先导入健康数据 zip 文件')) + '</div>' +
+    '<div class="scroll-pad-bottom"></div>';
+  wireDelegation(el);
+  var searchInput = el.querySelector('#browse-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', function () {
+      var q = searchInput.value.trim().toLowerCase();
+      el.querySelectorAll('#browse-list .list-row').forEach(function (row) {
+        var name = (row.getAttribute('data-name') || '').toLowerCase();
+        row.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
+      });
+    });
+  }
+  return el;
+}
+
+/* ---------------- 浏览：分类详情 (某分类下的指标列表) ---------------- */
+function renderCategoryScreen(catKey) {
+  var el = createScreen();
+  var cat = CATEGORIES[catKey];
+  var keys = Object.keys(METRICS).filter(function (k) { return METRICS[k].category === catKey && APP.dataset[k] && APP.dataset[k].length; });
+  keys.sort(function (a, b) { return SUMMARY_ORDER.indexOf(a) - SUMMARY_ORDER.indexOf(b); });
+  var rows = keys.map(function (k) {
+    var cfg = METRICS[k];
+    var pushAttr = k === 'SleepAnalysis' ? ('data-push="sleep" data-back="' + escapeHtml(cat.name) + '"') : ('data-push="metric" data-metric="' + k + '" data-back="' + escapeHtml(cat.name) + '"');
+    return (
+      '<div class="list-row inset" ' + pushAttr + '>' +
+        '<div class="row-icon" style="background:' + cat.grad + '">' + svgIcon(cfg.icon, 15) + '</div>' +
+        '<div class="row-title">' + escapeHtml(cfg.name) + '</div>' +
+        '<div class="row-disclosure"><span class="row-value">' + escapeHtml(getLatestValueText(k)) + '</span><span class="row-chevron">' + svgIcon('chevronRight', 14) + '</span></div>' +
+      '</div>'
+    );
+  }).join('');
+  el.innerHTML =
+    navBarHtml({ title: cat.name, backLabel: '浏览' }) +
+    '<div class="card" style="margin-top:6px">' + (rows || emptyStateHtml('暂无数据', '')) + '</div>' +
+    '<div class="scroll-pad-bottom"></div>';
+  wireDelegation(el);
+  return el;
+}
+
+
+/* ============================================================
+   MODULE G: 视图渲染 — 指标详情页 + Chart.js
+   ============================================================ */
+var WEEKDAY_MIN = ['日', '一', '二', '三', '四', '五', '六'];
+var PERIOD_UNIT_LABEL = { D: '小时', W: '天', M: '天', '6M': '周', Y: '月' };
+function rangeLabel(r) { return { D: '日', W: '周', M: '月', '6M': '6月', Y: '年' }[r] || r; }
+function chartAggType(cfg) { return cfg.agg === 'sum' ? 'sum' : 'avg'; }
+
+function buildLabels(range, points) {
+  if (range === 'D') return points.map(function (p) { var h = p.date.getHours(); return (h % 6 === 0) ? (h + '时') : ''; });
+  if (range === 'W') return points.map(function (p) { return WEEKDAY_MIN[p.date.getDay()]; });
+  if (range === 'M') return points.map(function (p) { var dom = p.date.getDate(); return (dom === 1 || dom % 5 === 0) ? ('' + dom) : ''; });
+  if (range === '6M') {
+    var lastMonth = null;
+    return points.map(function (p) {
+      var mk = p.date.getFullYear() + '-' + p.date.getMonth();
+      if (mk !== lastMonth) { lastMonth = mk; return MONTH_NAMES[p.date.getMonth()]; }
+      return '';
+    });
+  }
+  if (range === 'Y') return points.map(function (p) { return MONTH_NAMES[p.date.getMonth()]; });
+  return points.map(function () { return ''; });
+}
+function barMaxThickness(range) { return { D: 6, W: 26, M: 8, '6M': 9, Y: 20 }[range] || 14; }
+function buildTooltipTitle(range, p) {
+  if (!p) return '';
+  if (range === 'D') return p.date.getHours() + ':00';
+  if (range === 'W' || range === 'M') return formatDayLabel(p.date) + ' ' + formatWeekdayShort(p.date);
+  if (range === '6M') return periodLabel('W', p.date);
+  if (range === 'Y') return formatYearMonth(p.date);
+  return '';
+}
+
+function renderStatBlock(key, points, range) {
+  var cfg = METRICS[key];
+  var valid = points.filter(function (p) { return p.value != null && !isNaN(p.value); });
+  if (!valid.length) return '<div class="stat-row"><span class="stat-label">此时间段内无数据</span></div>';
+  if (cfg.agg === 'sum') {
+    var total = sumOf(points);
+    if (range === 'D') {
+      return '<div class="stat-grid"><div class="stat-box"><div class="n">' + formatMetricValue(key, total) + '<span class="u">' + escapeHtml(cfg.unit) + '</span></div><div class="l">当日总计</div></div></div>';
+    }
+    var avg = averageOf(points);
+    return (
+      '<div class="stat-grid">' +
+        '<div class="stat-box"><div class="n">' + formatMetricValue(key, avg) + '<span class="u">' + escapeHtml(cfg.unit) + '</span></div><div class="l">平均每' + PERIOD_UNIT_LABEL[range] + '</div></div>' +
+        '<div class="stat-box"><div class="n">' + formatMetricValue(key, total) + '<span class="u">' + escapeHtml(cfg.unit) + '</span></div><div class="l">总计</div></div>' +
+      '</div>'
+    );
+  }
+  var avg2 = averageOf(points), mn = minOf(points), mx = maxOf(points);
+  return (
+    '<div class="stat-grid">' +
+      '<div class="stat-box"><div class="n">' + formatMetricValue(key, avg2) + '<span class="u">' + escapeHtml(cfg.unit) + '</span></div><div class="l">平均值</div></div>' +
+      '<div class="stat-box"><div class="n">' + formatMetricValue(key, mn) + ' – ' + formatMetricValue(key, mx) + '<span class="u">' + escapeHtml(cfg.unit) + '</span></div><div class="l">范围</div></div>' +
+    '</div>'
+  );
+}
+
+function renderMetricDetailScreen(key, backLabel) {
+  var el = createScreen();
+  var cfg = METRICS[key];
+  if (!cfg) return el;
+  var cat = CATEGORIES[cfg.category];
+  var samples = APP.dataset[key] || [];
+  var state = { range: 'W', refDate: samples.length ? new Date(samples[samples.length - 1].start.getTime()) : new Date() };
+
+  var sourcesHtml = uniqueSources(samples).map(function (s) {
+    return '<span class="source-chip"><span class="dot" style="background:' + cat.color + '"></span>' + escapeHtml(s) + '</span>';
+  }).join('');
+
+  el.innerHTML =
+    navBarHtml({ title: cfg.name, backLabel: backLabel || '返回' }) +
+    '<div class="segmented-wrap"><div class="segmented" id="range-seg">' +
+      ['D', 'W', 'M', '6M', 'Y'].map(function (r) { return '<button data-range="' + r + '" class="' + (r === 'W' ? 'active' : '') + '">' + rangeLabel(r) + '</button>'; }).join('') +
+    '</div></div>' +
+    '<div class="period-nav">' +
+      '<button data-dir="-1" class="enabled" id="period-prev">' + svgIcon('chevronLeft', 16) + '</button>' +
+      '<span class="period-label" id="period-label"></span>' +
+      '<button data-dir="1" id="period-next">' + svgIcon('chevronRight', 16) + '</button>' +
+    '</div>' +
+    '<div class="chart-card"><div class="chart-canvas-wrap" id="chart-canvas-wrap"><canvas id="detail-canvas"></canvas></div>' +
+      '<div id="stat-container"></div>' +
+    '</div>' +
+    (samples.length ? '<div class="card"><div class="list-row" data-push="alldata" data-metric="' + key + '"><div class="row-title" style="color:var(--blue)">显示所有数据</div><span class="row-chevron">' + svgIcon('chevronRight', 14) + '</span></div></div>' : '') +
+    '<div class="about-title">关于&ldquo;' + escapeHtml(cfg.name) + '&rdquo;</div>' +
+    '<div class="about-block">' + escapeHtml(cfg.about) + '</div>' +
+    (sourcesHtml ? ('<div class="card-header">数据来源</div><div style="padding:0 16px 10px">' + sourcesHtml + '</div>') : '') +
+    '<div class="scroll-pad-bottom"></div>';
+
+  wireDelegation(el);
+
+  if (!samples.length) {
+    el.querySelector('#chart-canvas-wrap').innerHTML = emptyStateHtml('暂无数据', '未从导出文件中读取到该指标的数据');
+    el.querySelector('#period-label').textContent = '';
+    return el;
+  }
+
+  var canvas = el.querySelector('#detail-canvas');
+  var chart = null;
+  var periodLabelEl = el.querySelector('#period-label');
+  var periodPrevBtn = el.querySelector('#period-prev');
+  var periodNextBtn = el.querySelector('#period-next');
+  var statContainer = el.querySelector('#stat-container');
+
+  function draw() {
+    var points = buildSeries(samples, state.range, chartAggType(cfg), state.refDate);
+    var labels = buildLabels(state.range, points);
+    var color = cssVar(catColorVarName(cfg.category));
+    var isBar = cfg.chartKind === 'bar';
+    var dataArr = points.map(function (p) { return p.value; });
+
+    periodLabelEl.textContent = periodLabel(state.range, state.refDate);
+    var disabledNext = isFuturePeriod(state.range, shiftRefDate(state.range, state.refDate, 1));
+    periodNextBtn.classList.toggle('enabled', !disabledNext);
+    periodNextBtn.disabled = disabledNext;
+
+    statContainer.innerHTML = renderStatBlock(key, points, state.range);
+
+    var dataset = {
+      data: dataArr,
+      backgroundColor: isBar ? color : hexToRgba(color, .16),
+      borderColor: color,
+      borderWidth: isBar ? 0 : 2,
+      borderRadius: isBar ? 3 : 0,
+      borderSkipped: false,
+      fill: !isBar,
+      tension: .3,
+      pointRadius: 0,
+      pointHoverRadius: isBar ? 0 : 4,
+      pointHoverBackgroundColor: color,
+      pointHoverBorderColor: '#fff',
+      pointHoverBorderWidth: 2,
+      spanGaps: true,
+      maxBarThickness: barMaxThickness(state.range)
+    };
+    var tooltipCfg = {
+      enabled: true, backgroundColor: 'rgba(28,28,30,.92)', titleColor: 'rgba(255,255,255,.6)',
+      bodyColor: '#fff', titleFont: { size: 11, weight: '500' }, bodyFont: { size: 13, weight: '600' },
+      padding: 8, cornerRadius: 8, displayColors: false,
+      callbacks: {
+        title: function (items) { return buildTooltipTitle(state.range, points[items[0].dataIndex]); },
+        label: function (item) {
+          var v = item.parsed.y;
+          if (v == null) return '无数据';
+          return formatMetricValue(key, v) + (cfg.unit ? ' ' + cfg.unit : '');
+        }
+      }
+    };
+    var scalesCfg = {
+      x: { grid: { display: false }, border: { display: false }, ticks: { color: cssVar('--label-3'), font: { size: 10.5 }, autoSkip: false, maxRotation: 0, minRotation: 0 } },
+      y: { beginAtZero: isBar, grid: { color: cssVar('--chart-grid'), drawTicks: false }, border: { display: false }, ticks: { color: cssVar('--label-3'), font: { size: 10.5 }, maxTicksLimit: 4 } }
+    };
+
+    if (chart) {
+      chart.data.labels = labels;
+      chart.data.datasets = [dataset];
+      chart.options.plugins.tooltip = tooltipCfg;
+      chart.options.scales = scalesCfg;
+      chart.update();
+    } else {
+      chart = new Chart(canvas.getContext('2d'), {
+        type: isBar ? 'bar' : 'line',
+        data: { labels: labels, datasets: [dataset] },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: { duration: 260 },
+          plugins: { legend: { display: false }, tooltip: tooltipCfg },
+          scales: scalesCfg,
+          interaction: { mode: 'index', intersect: false }
+        }
+      });
+      registerChart(el, chart);
+    }
+  }
+
+  el.querySelector('#range-seg').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-range]');
+    if (!b) return;
+    state.range = b.getAttribute('data-range');
+    el.querySelectorAll('#range-seg button').forEach(function (x) { x.classList.toggle('active', x === b); });
+    draw();
+  });
+  periodPrevBtn.addEventListener('click', function () { state.refDate = shiftRefDate(state.range, state.refDate, -1); draw(); });
+  periodNextBtn.addEventListener('click', function () { if (periodNextBtn.disabled) return; state.refDate = shiftRefDate(state.range, state.refDate, 1); draw(); });
+
+  // 首次绘制必须等待该 screen 真正挂载到 DOM 后再执行 (否则 Chart.js 测得容器尺寸为 0)
+  requestAnimationFrame(draw);
+
+  return el;
+}
+
+/* ---------------- 显示所有数据 (原始样本分页列表) ---------------- */
+function renderAllDataScreen(key) {
+  var el = createScreen();
+  var cfg = METRICS[key];
+  var samples = (APP.dataset[key] || []).slice().reverse();
+  var pageSize = 100, shown = 0;
+
+  el.innerHTML =
+    navBarHtml({ title: cfg.name, backLabel: cfg.name, subtitle: formatNumber(samples.length, 0) + ' 条记录' }) +
+    '<div class="card" id="all-data-list" style="margin-top:6px"></div>' +
+    '<div style="text-align:center;font-size:12px;color:var(--label-3);margin:10px 0 2px" id="count-label"></div>' +
+    '<button class="load-more-btn" id="load-more">加载更多</button>' +
+    '<div class="scroll-pad-bottom"></div>';
+  wireDelegation(el);
+
+  var listEl = el.querySelector('#all-data-list');
+  var loadMoreBtn = el.querySelector('#load-more');
+  var countLabel = el.querySelector('#count-label');
+
+  function renderPage() {
+    var slice = samples.slice(shown, shown + pageSize);
+    var html = slice.map(function (s) {
+      var valueText = (s.value != null && !isNaN(s.value)) ? (formatMetricValue(key, s.value) + ' ' + cfg.unit) : escapeHtml(String(s.rawValue || '--'));
+      return (
+        '<div class="data-list-row"><div><div class="d-date">' + formatDayLabel(s.start) + ' <span class="d-time">' + formatClock(s.start, true) + '</span></div>' +
+        (s.source ? '<div class="d-src">' + escapeHtml(s.source) + '</div>' : '') + '</div>' +
+        '<div class="d-value">' + valueText + '</div></div>'
+      );
+    }).join('');
+    listEl.insertAdjacentHTML('beforeend', html);
+    shown += slice.length;
+    loadMoreBtn.style.display = shown < samples.length ? '' : 'none';
+    countLabel.textContent = '已显示 ' + formatNumber(shown, 0) + ' / ' + formatNumber(samples.length, 0) + ' 条（按时间倒序）';
+  }
+  loadMoreBtn.addEventListener('click', renderPage);
+  if (samples.length) renderPage();
+  else listEl.innerHTML = emptyStateHtml('暂无数据', '');
+
+  return el;
+}
+
+
+/* ============================================================
+   MODULE H: 视图渲染 — 睡眠详情页 (专用)
+   ============================================================ */
+function buildSleepSeries(range, refDate) {
+  var nightsByKey = {};
+  APP.sleepNights.forEach(function (n) { nightsByKey[n.key] = n; });
+  var points = [];
+  if (range === 'W') {
+    var wStart = startOfWeek(refDate);
+    for (var i = 0; i < 7; i++) { var d = new Date(wStart.getTime()); d.setDate(wStart.getDate() + i); var k = dayKey(d); points.push({ date: d, key: k, night: nightsByKey[k] || null }); }
+  } else if (range === 'M') {
+    var mStart = new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+    var dim = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0).getDate();
+    for (var j = 0; j < dim; j++) { var d2 = new Date(mStart.getTime()); d2.setDate(1 + j); var k2 = dayKey(d2); points.push({ date: d2, key: k2, night: nightsByKey[k2] || null }); }
+  } else if (range === '6M') {
+    var wk = startOfWeek(refDate); wk.setDate(wk.getDate() - 7 * 25);
+    for (var w = 0; w < 26; w++) {
+      var wS = new Date(wk.getTime()); wS.setDate(wk.getDate() + 7 * w);
+      var wE = new Date(wS.getTime()); wE.setDate(wS.getDate() + 6);
+      points.push({ date: wS, key: dayKey(wS), agg: sumNightsInSpan(wS, wE) });
+    }
+  } else if (range === 'Y') {
+    for (var m = 11; m >= 0; m--) {
+      var d3 = new Date(refDate.getFullYear(), refDate.getMonth() - m, 1);
+      var mEnd = new Date(d3.getFullYear(), d3.getMonth() + 1, 0);
+      points.push({ date: d3, key: monthKey(d3), agg: sumNightsInSpan(d3, mEnd) });
+    }
+  }
+  return points;
+}
+function sumNightsInSpan(start, end) {
+  var sum = { awake: 0, rem: 0, core: 0, deep: 0, inBed: 0 }, count = 0;
+  APP.sleepNights.forEach(function (n) {
+    var d = dateFromKey(n.key);
+    if (d >= start && d <= end) {
+      sum.awake += n.stages.awake; sum.rem += n.stages.rem; sum.core += n.stages.core; sum.deep += n.stages.deep; sum.inBed += n.stages.inBed; count++;
+    }
+  });
+  var avg = count ? { awake: sum.awake / count, rem: sum.rem / count, core: sum.core / count, deep: sum.deep / count, inBed: sum.inBed / count } : null;
+  return { sum: sum, avg: avg, count: count };
+}
+function nightsInRange(range, refDate) {
+  if (range === 'D') { var dk = dayKey(refDate); return APP.sleepNights.filter(function (n) { return n.key === dk; }); }
+  var start, end;
+  if (range === 'W') { start = startOfWeek(refDate); end = new Date(start.getTime()); end.setDate(start.getDate() + 6); }
+  else if (range === 'M') { start = new Date(refDate.getFullYear(), refDate.getMonth(), 1); end = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0); }
+  else if (range === '6M') { var e2 = new Date(refDate.getFullYear(), refDate.getMonth(), 1); start = new Date(e2.getFullYear(), e2.getMonth() - 5, 1); end = new Date(e2.getFullYear(), e2.getMonth() + 1, 0); }
+  else { start = new Date(refDate.getFullYear(), 0, 1); end = new Date(refDate.getFullYear(), 11, 31); }
+  return APP.sleepNights.filter(function (n) { var d = dateFromKey(n.key); return d >= start && d <= end; });
+}
+function renderSleepStatBlock(range, refDate) {
+  var nights = nightsInRange(range, refDate);
+  if (!nights.length) return '<div class="stat-row"><span class="stat-label">此时间段内无睡眠记录</span></div>';
+  var asleepSum = 0, inBedSum = 0;
+  nights.forEach(function (n) {
+    var staged = n.stages.core + n.stages.deep + n.stages.rem;
+    asleepSum += nightAsleepMinutes(n);
+    inBedSum += staged + n.stages.awake + n.stages.inBed;
+  });
+  var avgAsleep = asleepSum / nights.length, avgInBed = inBedSum / nights.length;
+  var anyStaged = nights.some(nightHasStageData);
+  var l1 = (anyStaged ? '睡眠' : '在床') + (range === 'D' ? '时长' : '平均时长');
+  var l2 = range === 'D' ? '在床时间' : '平均在床时间';
+  return (
+    '<div class="stat-grid">' +
+      '<div class="stat-box"><div class="n">' + formatDuration(avgAsleep) + '</div><div class="l">' + l1 + '</div></div>' +
+      '<div class="stat-box"><div class="n">' + formatDuration(avgInBed) + '</div><div class="l">' + l2 + '</div></div>' +
+    '</div>'
+  );
+}
+function stageLegendHtml() {
+  return '<div class="stage-legend">' + SLEEP_STAGE_STACK_ORDER.map(function (s) {
+    return '<div class="stage-legend-item"><span class="sw" style="background:' + SLEEP_STAGES[s].color + '"></span><span class="sn">' + SLEEP_STAGES[s].name + '</span></div>';
+  }).join('') + '</div>';
+}
+function renderNightTimelineHtml(night) {
+  if (!night) return emptyStateHtml('这一晚没有睡眠记录', '');
+  var segs = night.segments.slice().sort(function (a, b) { return a.start - b.start; });
+  var barHtml = segs.map(function (seg) {
+    var dur = Math.max(1, (seg.end - seg.start) / 60000);
+    return '<div class="seg" style="flex-grow:' + dur + ';background:' + SLEEP_STAGES[seg.stage].color + '"></div>';
+  }).join('');
+  var breakdown = SLEEP_STAGE_STACK_ORDER.concat(['inBed']).filter(function (s) { return night.stages[s] > 0; }).map(function (s) {
+    return '<div class="stage-duration-row"><span class="sw" style="background:' + SLEEP_STAGES[s].color + '"></span><span class="name">' + SLEEP_STAGES[s].name + '</span><span class="dur">' + formatDuration(night.stages[s]) + '</span></div>';
+  }).join('');
+  return (
+    '<div class="night-timeline-card">' +
+      '<div class="night-timeline-title"><span>' + formatClock(night.start, true) + ' 入睡</span><span>' + formatClock(night.end, true) + ' 起床</span></div>' +
+      '<div class="night-timeline-bar">' + barHtml + '</div>' +
+      '<div class="stage-duration-list">' + breakdown + '</div>' +
+    '</div>'
+  );
+}
+function nightRowHtml(n) {
+  var asleep = nightAsleepMinutes(n);
+  var segs = ['deep', 'core', 'rem', 'awake', 'inBed'].filter(function (s) { return n.stages[s] > 0; }).map(function (s) {
+    return '<div class="seg" style="flex-grow:' + n.stages[s] + ';background:' + SLEEP_STAGES[s].color + '"></div>';
+  }).join('');
+  return (
+    '<div class="night-row" data-night="' + n.key + '">' +
+      '<div class="nr-date">' + formatDayLabel(dateFromKey(n.key)) + '<span class="wd">' + formatWeekdayShort(dateFromKey(n.key)) + '</span></div>' +
+      '<div class="nr-bar">' + segs + '</div>' +
+      '<div class="nr-total">' + formatDuration(asleep) + '</div>' +
+    '</div>'
+  );
+}
+
+function renderSleepDetailScreen(backLabel) {
+  var el = createScreen();
+  if (!APP.sleepNights.length) {
+    el.innerHTML = navBarHtml({ title: '睡眠', backLabel: backLabel || '返回' }) +
+      emptyStateHtml('暂无睡眠数据', '未从导出文件中读取到睡眠分析数据') + '<div class="scroll-pad-bottom"></div>';
+    wireDelegation(el);
+    return el;
+  }
+  var lastNight = APP.sleepNights[APP.sleepNights.length - 1];
+  var state = { range: 'D', refDate: dateFromKey(lastNight.key) };
+  var sourcesHtml = uniqueSources(APP.dataset.SleepAnalysis || []).map(function (s) {
+    return '<span class="source-chip"><span class="dot" style="background:' + CATEGORIES.sleep.color + '"></span>' + escapeHtml(s) + '</span>';
+  }).join('');
+  var recentNights = APP.sleepNights.slice().reverse();
+  var nightsShown = 0;
+
+  el.innerHTML =
+    navBarHtml({ title: '睡眠', backLabel: backLabel || '返回' }) +
+    '<div class="segmented-wrap"><div class="segmented" id="sleep-range-seg">' +
+      ['D', 'W', 'M', '6M', 'Y'].map(function (r) { return '<button data-range="' + r + '" class="' + (r === 'D' ? 'active' : '') + '">' + rangeLabel(r) + '</button>'; }).join('') +
+    '</div></div>' +
+    '<div class="period-nav"><button data-dir="-1" class="enabled" id="sleep-period-prev">' + svgIcon('chevronLeft', 16) + '</button>' +
+      '<span class="period-label" id="sleep-period-label"></span>' +
+      '<button data-dir="1" id="sleep-period-next">' + svgIcon('chevronRight', 16) + '</button></div>' +
+    '<div id="sleep-dynamic-area"></div>' +
+    '<div class="card-header">近期睡眠</div>' +
+    '<div id="recent-nights-list"></div>' +
+    '<button class="load-more-btn" id="nights-load-more">加载更多</button>' +
+    '<div class="about-title">关于&ldquo;睡眠&rdquo;</div>' +
+    '<div class="about-block">' + escapeHtml(METRICS.SleepAnalysis.about) + '</div>' +
+    (sourcesHtml ? ('<div class="card-header">数据来源</div><div style="padding:0 16px 10px">' + sourcesHtml + '</div>') : '') +
+    '<div class="scroll-pad-bottom"></div>';
+
+  wireDelegation(el);
+
+  var dynamicArea = el.querySelector('#sleep-dynamic-area');
+  var periodLabelEl = el.querySelector('#sleep-period-label');
+  var periodPrevBtn = el.querySelector('#sleep-period-prev');
+  var periodNextBtn = el.querySelector('#sleep-period-next');
+  var nightsListEl = el.querySelector('#recent-nights-list');
+  var nightsLoadMoreBtn = el.querySelector('#nights-load-more');
+  var chart = null;
+
+  function renderNightsPage() {
+    var slice = recentNights.slice(nightsShown, nightsShown + 30);
+    nightsListEl.insertAdjacentHTML('beforeend', slice.map(nightRowHtml).join(''));
+    nightsShown += slice.length;
+    nightsLoadMoreBtn.style.display = nightsShown < recentNights.length ? '' : 'none';
+  }
+
+  function drawDynamic() {
+    periodLabelEl.textContent = periodLabel(state.range, state.refDate);
+    var disabledNext = isFuturePeriod(state.range, shiftRefDate(state.range, state.refDate, 1));
+    periodNextBtn.classList.toggle('enabled', !disabledNext);
+    periodNextBtn.disabled = disabledNext;
+
+    if (state.range === 'D') {
+      if (chart) { chart.destroy(); chart = null; }
+      var dk = dayKey(state.refDate);
+      var night = APP.sleepNights.filter(function (n) { return n.key === dk; })[0] || null;
+      dynamicArea.innerHTML = renderNightTimelineHtml(night) + renderSleepStatBlock('D', state.refDate);
+    } else {
+      if (chart) { chart.destroy(); chart = null; }
+      dynamicArea.innerHTML = '<div class="chart-card"><div class="chart-canvas-wrap"><canvas id="sleep-canvas"></canvas></div><div id="sleep-stat-container"></div></div>' + stageLegendHtml();
+      var canvas = dynamicArea.querySelector('#sleep-canvas');
+      var points = buildSleepSeries(state.range, state.refDate);
+      var labels = buildLabels(state.range, points);
+      var getVal = function (p, stage) {
+        if (p.night !== undefined) return p.night ? p.night.stages[stage] / 60 : null;
+        if (p.agg) return p.agg.avg ? p.agg.avg[stage] / 60 : null;
+        return null;
+      };
+      var datasets = SLEEP_STAGE_STACK_ORDER.map(function (stage) {
+        return {
+          label: SLEEP_STAGES[stage].name,
+          data: points.map(function (p) { return getVal(p, stage); }),
+          backgroundColor: cssVar('--stage-' + stage.toLowerCase()), stack: 'sleep',
+          maxBarThickness: barMaxThickness(state.range), borderRadius: 0
+        };
+      });
+      var tooltipCfg = {
+        backgroundColor: 'rgba(28,28,30,.92)', titleColor: 'rgba(255,255,255,.6)', bodyColor: '#fff',
+        padding: 8, cornerRadius: 8,
+        filter: function (item) { return item.parsed.y > 0.0167; },
+        callbacks: {
+          title: function (items) { return items.length ? buildTooltipTitle(state.range, points[items[0].dataIndex]) : ''; },
+          label: function (item) { return item.dataset.label + ': ' + formatDuration(item.parsed.y * 60); },
+          footer: function (items) { var total = items.reduce(function (a, it) { return a + it.parsed.y; }, 0); return total > 0 ? ('总计: ' + formatDuration(total * 60)) : ''; }
+        }
+      };
+      chart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels, datasets: datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: { duration: 260 },
+          plugins: { legend: { display: false }, tooltip: tooltipCfg },
+          scales: {
+            x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: cssVar('--label-3'), font: { size: 10.5 }, autoSkip: false, maxRotation: 0, minRotation: 0 } },
+            y: { stacked: true, beginAtZero: true, grid: { color: cssVar('--chart-grid'), drawTicks: false }, border: { display: false }, ticks: { color: cssVar('--label-3'), font: { size: 10.5 }, maxTicksLimit: 4, callback: function (v) { return v + 'h'; } } }
+          },
+          interaction: { mode: 'index', intersect: false }
+        }
+      });
+      registerChart(el, chart);
+      dynamicArea.querySelector('#sleep-stat-container').innerHTML = renderSleepStatBlock(state.range, state.refDate);
+    }
+  }
+
+  el.querySelector('#sleep-range-seg').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-range]'); if (!b) return;
+    state.range = b.getAttribute('data-range');
+    el.querySelectorAll('#sleep-range-seg button').forEach(function (x) { x.classList.toggle('active', x === b); });
+    drawDynamic();
+  });
+  periodPrevBtn.addEventListener('click', function () { state.refDate = shiftRefDate(state.range, state.refDate, -1); drawDynamic(); });
+  periodNextBtn.addEventListener('click', function () { if (periodNextBtn.disabled) return; state.refDate = shiftRefDate(state.range, state.refDate, 1); drawDynamic(); });
+  nightsListEl.addEventListener('click', function (e) {
+    var row = e.target.closest('.night-row'); if (!row) return;
+    state.range = 'D'; state.refDate = dateFromKey(row.getAttribute('data-night'));
+    el.querySelectorAll('#sleep-range-seg button').forEach(function (x) { x.classList.toggle('active', x.getAttribute('data-range') === 'D'); });
+    drawDynamic();
+    el.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  nightsLoadMoreBtn.addEventListener('click', renderNightsPage);
+
+  renderNightsPage();
+  requestAnimationFrame(drawDynamic);
+
+  return el;
+}
+
+
+/* ============================================================
+   MODULE I: 启动初始化
+   ============================================================ */
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && screenStack.length > 1) popScreen();
+});
+
+
+</script>
+
+
+</body>
+</html>
